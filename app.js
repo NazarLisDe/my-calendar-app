@@ -3,7 +3,7 @@ const DAYS = ['Понедельник', 'Вторник', 'Среда', 'Чет�
 const STORAGE_KEY = 'calendar-board-state-v1';
 
 const defaultState = () => ({
-  sortMode: 'created',
+  theme: 'light',
   nextTaskId: 1,
   nextCloudId: 1,
   nextGroupId: 1,
@@ -12,12 +12,13 @@ const defaultState = () => ({
 });
 
 let state = loadState();
-let history = [{ description: 'Начальное состояние', snapshot: structuredClone(state), ts: new Date().toISOString() }];
+let history = [{ description: 'Старт', snapshot: structuredClone(state), ts: new Date().toISOString() }];
 let currentHistoryIndex = 0;
 let previewIndex = null;
 let currentBoardTaskId = null;
 let dragTask = null;
 let dragCloud = null;
+let selectedCloudIds = new Set();
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -47,20 +48,23 @@ function effectiveState() {
   return previewIndex === null ? state : history[previewIndex].snapshot;
 }
 
-function sortedTasks(tasks, mode) {
-  const copy = [...tasks];
-  copy.sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    if (mode === 'alpha') return a.title.localeCompare(b.title, 'ru');
-    return a.createdAt - b.createdAt;
-  });
-  return copy;
+function arrangeTasks(tasks) {
+  const pinned = tasks.filter((task) => task.pinned);
+  const regular = tasks.filter((task) => !task.pinned);
+  return [...pinned, ...regular];
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const toggle = document.getElementById('themeToggle');
+  toggle.textContent = theme === 'dark' ? 'Светлая тема' : 'Тёмная тема';
 }
 
 function renderCalendar() {
   const s = effectiveState();
   const grid = document.getElementById('calendarGrid');
   grid.innerHTML = '';
+
   DAYS.forEach((day) => {
     const col = document.createElement('div');
     col.className = 'day-column';
@@ -69,7 +73,7 @@ function renderCalendar() {
       <h3 class="day-header">${day}</h3>
       <form class="add-task">
         <input name="title" placeholder="Новая задача" required />
-        <button>+</button>
+        <button type="submit">+</button>
       </form>
       <ul class="tasks"></ul>
     `;
@@ -80,7 +84,7 @@ function renderCalendar() {
       const input = form.title;
       const title = input.value.trim();
       if (!title) return;
-      commit(`Добавлена задача «${title}» в ${day}`, (st) => {
+      commit(`Добавлена задача «${title}»`, (st) => {
         st.days[day].push({ id: st.nextTaskId++, title, pinned: false, createdAt: Date.now() });
       });
     });
@@ -90,7 +94,7 @@ function renderCalendar() {
       if (!dragTask) return;
       const { fromDay, taskId } = dragTask;
       if (fromDay === day) return;
-      commit(`Задача перенесена из ${fromDay} в ${day}`, (st) => {
+      commit(`Задача перенесена в «${day}»`, (st) => {
         const idx = st.days[fromDay].findIndex((t) => t.id === taskId);
         if (idx < 0) return;
         const [task] = st.days[fromDay].splice(idx, 1);
@@ -100,49 +104,63 @@ function renderCalendar() {
     });
 
     const list = col.querySelector('.tasks');
-    sortedTasks(s.days[day], s.sortMode).forEach((task) => {
+    arrangeTasks(s.days[day]).forEach((task) => {
       const tpl = document.getElementById('taskTemplate');
       const node = tpl.content.firstElementChild.cloneNode(true);
       if (task.pinned) node.classList.add('pinned');
       node.querySelector('.open-board').textContent = task.title;
       node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
+
       node.querySelector('.delete').addEventListener('click', () => {
         commit(`Удалена задача «${task.title}»`, (st) => {
           st.days[day] = st.days[day].filter((t) => t.id !== task.id);
           delete st.boards[task.id];
         });
       });
+
       node.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        commit(`Переключено закрепление «${task.title}»`, (st) => {
+        commit(`Изменён статус закрепления`, (st) => {
           const t = st.days[day].find((x) => x.id === task.id);
           if (t) t.pinned = !t.pinned;
         });
       });
-      node.addEventListener('dragstart', () => { dragTask = { fromDay: day, taskId: task.id }; });
+
+      node.addEventListener('dragstart', () => {
+        dragTask = { fromDay: day, taskId: task.id };
+      });
+
       list.append(node);
     });
 
     grid.append(col);
   });
 
-  document.getElementById('sortMode').value = s.sortMode;
+  applyTheme(s.theme);
 }
 
 function renderHistory() {
   const list = document.getElementById('historyList');
   list.innerHTML = '';
+
   history.forEach((entry, i) => {
     const li = document.createElement('li');
     if (i === currentHistoryIndex && previewIndex === null) li.classList.add('active');
     if (i === previewIndex) li.classList.add('active');
     li.innerHTML = `<strong>${entry.description}</strong><br/><small>${new Date(entry.ts).toLocaleString('ru-RU')}</small>`;
+
     const actions = document.createElement('div');
     const previewBtn = document.createElement('button');
-    previewBtn.textContent = 'Предпросмотр';
-    previewBtn.onclick = () => { previewIndex = i; renderAll(); };
+    previewBtn.textContent = 'Просмотр';
+    previewBtn.type = 'button';
+    previewBtn.onclick = () => {
+      previewIndex = i;
+      renderAll();
+    };
+
     const rollbackBtn = document.createElement('button');
-    rollbackBtn.textContent = 'Откатиться сюда';
+    rollbackBtn.textContent = 'Откат';
+    rollbackBtn.type = 'button';
     rollbackBtn.onclick = () => {
       state = structuredClone(history[i].snapshot);
       history = history.slice(0, i + 1);
@@ -151,6 +169,7 @@ function renderHistory() {
       persist();
       renderAll();
     };
+
     actions.append(previewBtn, rollbackBtn);
     li.append(actions);
     list.append(li);
@@ -160,7 +179,7 @@ function renderHistory() {
   const exit = document.getElementById('exitPreview');
   if (previewIndex !== null) {
     banner.classList.remove('hidden');
-    banner.textContent = `Режим предпросмотра: ${history[previewIndex].description}`;
+    banner.textContent = `Режим просмотра: ${history[previewIndex].description}`;
     exit.classList.remove('hidden');
   } else {
     banner.classList.add('hidden');
@@ -185,6 +204,7 @@ function ensureBoard(taskId) {
 
 function openBoard(taskId) {
   currentBoardTaskId = taskId;
+  selectedCloudIds = new Set();
   location.hash = `board/${taskId}`;
   renderBoard();
 }
@@ -195,6 +215,7 @@ function renderBoard() {
     document.getElementById('boardView').classList.add('hidden');
     return;
   }
+
   const taskId = Number(location.hash.split('/')[1]);
   currentBoardTaskId = taskId;
   const taskInfo = getTaskById(taskId, effectiveState());
@@ -217,13 +238,14 @@ function renderBoard() {
     const el = document.createElement('div');
     el.className = 'cloud';
     if (cloud.groupId) el.classList.add('grouped');
+    if (selectedCloudIds.has(cloud.id)) el.classList.add('selected');
     el.dataset.id = cloud.id;
     el.style.left = `${cloud.x}px`;
     el.style.top = `${cloud.y}px`;
-    el.innerHTML = `<label><input type="checkbox" class="pick"/> выбрать</label><textarea>${cloud.text || ''}</textarea>`;
+    el.innerHTML = `<textarea>${cloud.text || ''}</textarea>`;
 
     el.querySelector('textarea').addEventListener('change', (e) => {
-      commit('Изменен текст облака', (st) => {
+      commit('Изменён текст заметки', (st) => {
         const b = ensureBoard(taskId);
         const c = b.clouds.find((x) => x.id === cloud.id);
         if (c) c.text = e.target.value;
@@ -231,7 +253,18 @@ function renderBoard() {
     });
 
     el.addEventListener('mousedown', (e) => {
-      if (e.target.matches('textarea, input')) return;
+      if (e.button !== 0) return;
+      if (e.ctrlKey && !e.target.matches('textarea')) {
+        if (selectedCloudIds.has(cloud.id)) {
+          selectedCloudIds.delete(cloud.id);
+        } else {
+          selectedCloudIds.add(cloud.id);
+        }
+        renderBoard();
+        return;
+      }
+
+      if (e.target.matches('textarea')) return;
       const startX = e.clientX;
       const startY = e.clientY;
       dragCloud = { id: cloud.id, startX, startY };
@@ -246,6 +279,7 @@ document.addEventListener('mousemove', (e) => {
   const board = ensureBoard(currentBoardTaskId);
   const c = board.clouds.find((x) => x.id === dragCloud.id);
   if (!c) return;
+
   const dx = (e.clientX - dragCloud.startX) / board.zoom;
   const dy = (e.clientY - dragCloud.startY) / board.zoom;
   dragCloud.startX = e.clientX;
@@ -257,13 +291,14 @@ document.addEventListener('mousemove', (e) => {
     item.x += dx;
     item.y += dy;
   });
+
   persist();
   renderBoard();
 });
 
 document.addEventListener('mouseup', () => {
   if (dragCloud) {
-    history.push({ description: 'Перемещение облака/группы', snapshot: structuredClone(state), ts: new Date().toISOString() });
+    history.push({ description: 'Перемещение заметки/группы', snapshot: structuredClone(state), ts: new Date().toISOString() });
     currentHistoryIndex = history.length - 1;
     renderHistory();
   }
@@ -276,13 +311,14 @@ function renderAll() {
   renderBoard();
 }
 
-document.getElementById('sortMode').addEventListener('change', (e) => {
-  const mode = e.target.value;
-  commit(`Изменена сортировка: ${mode}`, (st) => { st.sortMode = mode; });
+document.getElementById('themeToggle').addEventListener('click', () => {
+  commit('Смена темы', (st) => {
+    st.theme = st.theme === 'dark' ? 'light' : 'dark';
+  });
 });
 
 document.getElementById('clearUnpinned').addEventListener('click', () => {
-  commit('Удалены все незакреплённые задачи', (st) => {
+  commit('Удалены незакреплённые задачи', (st) => {
     for (const day of DAYS) {
       st.days[day] = st.days[day].filter((t) => t.pinned);
     }
@@ -294,12 +330,15 @@ document.getElementById('exitPreview').addEventListener('click', () => {
   renderAll();
 });
 
-document.getElementById('backToCalendar').addEventListener('click', () => { location.hash = ''; renderBoard(); });
+document.getElementById('backToCalendar').addEventListener('click', () => {
+  location.hash = '';
+  renderBoard();
+});
 
 document.getElementById('addCloud').addEventListener('click', () => {
   const taskId = currentBoardTaskId;
   if (!taskId) return;
-  commit('Добавлено текстовое облако', (st) => {
+  commit('Добавлена заметка', (st) => {
     const b = st.boards[taskId] || (st.boards[taskId] = { zoom: 1, clouds: [] });
     b.clouds.push({ id: st.nextCloudId++, text: '', x: 50, y: 50, groupId: null });
   });
@@ -307,23 +346,26 @@ document.getElementById('addCloud').addEventListener('click', () => {
 
 document.getElementById('groupClouds').addEventListener('click', () => {
   const taskId = currentBoardTaskId;
-  if (!taskId) return;
-  const picks = [...document.querySelectorAll('.cloud .pick:checked')].map((i) => Number(i.closest('.cloud').dataset.id));
-  if (picks.length < 2) return;
-  commit('Создана группа облаков', (st) => {
+  if (!taskId || selectedCloudIds.size < 2) return;
+  const picks = [...selectedCloudIds];
+  commit('Создана группа заметок', (st) => {
     const b = ensureBoard(taskId);
     const gid = st.nextGroupId++;
-    b.clouds.forEach((c) => { if (picks.includes(c.id)) c.groupId = gid; });
+    b.clouds.forEach((c) => {
+      if (picks.includes(c.id)) c.groupId = gid;
+    });
   });
 });
 
 document.getElementById('ungroupClouds').addEventListener('click', () => {
   const taskId = currentBoardTaskId;
-  if (!taskId) return;
-  const picks = [...document.querySelectorAll('.cloud .pick:checked')].map((i) => Number(i.closest('.cloud').dataset.id));
-  commit('Разгруппировка облаков', (st) => {
+  if (!taskId || selectedCloudIds.size === 0) return;
+  const picks = [...selectedCloudIds];
+  commit('Разгруппировка заметок', (st) => {
     const b = ensureBoard(taskId);
-    b.clouds.forEach((c) => { if (picks.includes(c.id)) c.groupId = null; });
+    b.clouds.forEach((c) => {
+      if (picks.includes(c.id)) c.groupId = null;
+    });
   });
 });
 
