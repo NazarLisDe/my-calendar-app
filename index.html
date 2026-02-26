@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Календарь задач</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Основной экран — Календарь</h1>
+    <div class="topbar-actions">
+      <label>
+        Сортировка
+        <select id="sortMode">
+          <option value="created">По дате создания</option>
+          <option value="alpha">По алфавиту</option>
+        </select>
+      </label>
+      <button id="clearUnpinned">Удалить все незакреплённые задачи</button>
+    </div>
+  </header>
+
+  <main id="calendarView">
+    <section id="calendarGrid" class="calendar-grid"></section>
+    <aside class="history-panel">
+      <h2>История действий</h2>
+      <p class="hint">Ctrl + Z — отмена последнего действия</p>
+      <div id="previewBanner" class="preview-banner hidden"></div>
+      <ul id="historyList" class="history-list"></ul>
+      <button id="exitPreview" class="hidden">Вернуться к текущему состоянию</button>
+    </aside>
+  </main>
+
+  <section id="boardView" class="hidden board-view">
+    <div class="board-header">
+      <button id="backToCalendar">← Назад к календарю</button>
+      <h2 id="boardTitle"></h2>
+      <div class="board-controls">
+        <button id="zoomOut">−</button>
+        <span id="zoomValue">100%</span>
+        <button id="zoomIn">+</button>
+      </div>
+    </div>
+
+    <div class="board-toolbar">
+      <button id="addCloud">Добавить текстовое облако</button>
+      <button id="groupClouds">Связать выбранные в группу</button>
+      <button id="ungroupClouds">Разгруппировать выбранные</button>
+    </div>
+
+    <div id="boardCanvasWrapper" class="board-canvas-wrapper">
+      <div id="boardCanvas" class="board-canvas"></div>
+    </div>
+  </section>
+
+  <template id="taskTemplate">
+    <li class="task" draggable="true">
+      <span class="pin">📌</span>
+      <button class="open-board" title="Открыть доску"></button>
+      <button class="delete" title="Удалить">✕</button>
+    </li>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
