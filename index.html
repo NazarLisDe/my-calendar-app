@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow Calendar</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">TaskFlow</p>
+      <h1>Календарь задач</h1>
+    </div>
+    <div class="topbar-actions">
+      <button id="themeToggle" title="Сменить тему">Тёмная тема</button>
+      <button id="clearUnpinned">Очистить незакреплённые</button>
+    </div>
+  </header>
+
+  <main id="calendarView">
+    <section id="calendarGrid" class="calendar-grid"></section>
+    <aside class="history-panel">
+      <h2>История</h2>
+      <p class="hint">Ctrl + Z — отмена последнего действия</p>
+      <div id="previewBanner" class="preview-banner hidden"></div>
+      <ul id="historyList" class="history-list"></ul>
+      <button id="exitPreview" class="hidden">Вернуться к текущему</button>
+    </aside>
+  </main>
+
+  <section id="boardView" class="hidden board-view">
+    <div class="board-header">
+      <button id="backToCalendar">← К календарю</button>
+      <h2 id="boardTitle"></h2>
+      <div class="board-controls">
+        <button id="zoomOut">−</button>
+        <span id="zoomValue">100%</span>
+        <button id="zoomIn">+</button>
+      </div>
+    </div>
+
+    <div class="board-toolbar">
+      <button id="addCloud">Новое облако</button>
+      <button id="groupClouds">Сгруппировать (Ctrl + ЛКМ)</button>
+      <button id="ungroupClouds">Разгруппировать (Ctrl + ЛКМ)</button>
+    </div>
+
+    <p class="hint board-hint">На доске: Ctrl + ЛКМ по облаку — выбрать/снять выбор.</p>
+
+    <div id="boardCanvasWrapper" class="board-canvas-wrapper">
+      <div id="boardCanvas" class="board-canvas"></div>
+    </div>
+  </section>
+
+  <template id="taskTemplate">
+    <li class="task" draggable="true">
+      <span class="pin">📌</span>
+      <button class="open-board" title="Открыть доску"></button>
+      <button class="delete" title="Удалить">✕</button>
+    </li>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>

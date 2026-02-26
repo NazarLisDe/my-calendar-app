@@ -1,0 +1,160 @@
+:root {
+  --bg: #f3f4f6;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --text: #111827;
+  --border: #e5e7eb;
+  --accent: #2563eb;
+  --task-bg: #eef2ff;
+  --task-border: #c7d2fe;
+  --cloud-bg: #fffbeb;
+  --cloud-border: #fde68a;
+}
+
+body.dark {
+  --bg: #0b1020;
+  --card: #131a2b;
+  --muted: #9ca3af;
+  --text: #e5e7eb;
+  --border: #2a344c;
+  --accent: #60a5fa;
+  --task-bg: #1b2742;
+  --task-border: #31446d;
+  --cloud-bg: #2c2618;
+  --cloud-border: #66572c;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+button, input, textarea {
+  font: inherit;
+  color: inherit;
+}
+button {
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+input {
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.topbar h1 { margin: 2px 0 0; font-size: 22px; }
+.topbar-actions { display: flex; gap: 10px; align-items: center; }
+main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 12px;
+  padding: 12px;
+}
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(190px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+}
+.day-column {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  min-height: 490px;
+}
+.day-header { margin: 0 0 8px; font-size: 15px; color: var(--muted); font-weight: 600; }
+.add-task { display: flex; gap: 6px; margin-bottom: 8px; }
+.add-task input { flex: 1; }
+.tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.task {
+  background: var(--task-bg);
+  border: 1px solid var(--task-border);
+  border-radius: 10px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  cursor: grab;
+}
+.task .pin { visibility: hidden; }
+.task.pinned .pin { visibility: visible; }
+.task .open-board,
+.task .delete { border: none; background: transparent; padding: 0; }
+.task .open-board { text-align: left; }
+.history-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  max-height: calc(100vh - 92px);
+  overflow: auto;
+}
+.hint { color: var(--muted); font-size: 13px; }
+.history-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.history-list li { border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
+.history-list .active { border-color: var(--accent); }
+.preview-banner { background: rgba(250, 204, 21, 0.18); padding: 6px; border-radius: 8px; margin-bottom: 8px; }
+.hidden { display: none !important; }
+.board-view { padding: 12px; }
+.board-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.board-toolbar { margin: 10px 0 4px; display: flex; gap: 8px; }
+.board-hint { margin: 0 0 8px; }
+.board-canvas-wrapper {
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 12px;
+  height: 70vh;
+  overflow: hidden;
+  position: relative;
+}
+.board-canvas {
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+  position: relative;
+  background-image: radial-gradient(circle at 1px 1px, rgba(100, 116, 139, 0.35) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+.cloud {
+  position: absolute;
+  width: 190px;
+  min-height: 96px;
+  background: var(--cloud-bg);
+  border: 1px solid var(--cloud-border);
+  border-radius: 16px;
+  padding: 10px;
+  transition: transform 120ms linear, left 120ms linear, top 120ms linear;
+}
+.cloud textarea {
+  width: 100%;
+  height: 62px;
+  border: none;
+  outline: none;
+  background: transparent;
+  resize: none;
+}
+.cloud.grouped { box-shadow: 0 0 0 1px var(--accent); }
+.cloud.selected { box-shadow: 0 0 0 2px var(--accent); }
