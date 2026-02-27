@@ -12,12 +12,13 @@
     <div class="topbar-actions">
       <button id="themeToggle" type="button">Тёмная тема</button>
       <button id="clearUnpinned" type="button">Очистить незакреплённые</button>
+      <button id="toggleHistory" type="button" aria-expanded="false">История</button>
     </div>
   </header>
 
   <main id="calendarView">
     <section id="calendarGrid" class="calendar-grid"></section>
-    <aside class="history-panel">
+    <aside id="historyPanel" class="history-panel">
       <h2>История</h2>
       <p class="hint">Ctrl + Z — шаг назад</p>
       <div id="previewBanner" class="preview-banner hidden"></div>

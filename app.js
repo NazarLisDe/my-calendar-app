@@ -19,6 +19,7 @@ let currentBoardTaskId = null;
 let dragTask = null;
 let dragCloud = null;
 let selectedCloudIds = new Set();
+let isHistoryOpen = false;
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -58,6 +59,15 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   const toggle = document.getElementById('themeToggle');
   toggle.textContent = theme === 'dark' ? 'Светлая тема' : 'Тёмная тема';
+}
+
+function setHistoryOpen(open) {
+  isHistoryOpen = open;
+  const panel = document.getElementById('historyPanel');
+  const toggle = document.getElementById('toggleHistory');
+  panel.classList.toggle('open', open);
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.textContent = open ? 'Скрыть историю' : 'История';
 }
 
 function renderCalendar() {
@@ -317,6 +327,16 @@ document.getElementById('themeToggle').addEventListener('click', () => {
   });
 });
 
+document.getElementById('toggleHistory').addEventListener('click', () => {
+  setHistoryOpen(!isHistoryOpen);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isHistoryOpen) {
+    setHistoryOpen(false);
+  }
+});
+
 document.getElementById('clearUnpinned').addEventListener('click', () => {
   commit('Удалены незакреплённые задачи', (st) => {
     for (const day of DAYS) {
@@ -401,4 +421,5 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('hashchange', renderBoard);
+setHistoryOpen(false);
 renderAll();
