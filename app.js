@@ -20,6 +20,7 @@ let dragTask = null;
 let dragCloud = null;
 let selectedCloudIds = new Set();
 let isHistoryOpen = false;
+let isInstructionsOpen = false;
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -68,6 +69,17 @@ function setHistoryOpen(open) {
   panel.classList.toggle('open', open);
   toggle.setAttribute('aria-expanded', String(open));
   toggle.textContent = open ? 'Скрыть историю' : 'История';
+}
+
+function setInstructionsOpen(open) {
+  isInstructionsOpen = open;
+  const panel = document.getElementById('instructionsPanel');
+  const toggle = document.getElementById('toggleInstructions');
+  if (!panel || !toggle) return;
+  panel.classList.toggle('open', open);
+  panel.setAttribute('aria-hidden', String(!open));
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.textContent = open ? 'Скрыть инструкцию' : 'Инструкция';
 }
 
 function renderCalendar() {
@@ -329,11 +341,18 @@ document.getElementById('themeToggle').addEventListener('click', () => {
 
 document.getElementById('toggleHistory').addEventListener('click', () => {
   setHistoryOpen(!isHistoryOpen);
+  if (isHistoryOpen) setInstructionsOpen(false);
+});
+
+document.getElementById('toggleInstructions').addEventListener('click', () => {
+  setInstructionsOpen(!isInstructionsOpen);
+  if (isInstructionsOpen) setHistoryOpen(false);
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && isHistoryOpen) {
-    setHistoryOpen(false);
+  if (e.key === 'Escape') {
+    if (isHistoryOpen) setHistoryOpen(false);
+    if (isInstructionsOpen) setInstructionsOpen(false);
   }
 });
 
@@ -375,6 +394,18 @@ document.getElementById('groupClouds').addEventListener('click', () => {
       if (picks.includes(c.id)) c.groupId = gid;
     });
   });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Delete') return;
+  if (e.target.matches('input, textarea, [contenteditable="true"]')) return;
+  if (!location.hash.startsWith('#board/') || !currentBoardTaskId || selectedCloudIds.size === 0) return;
+  const picks = [...selectedCloudIds];
+  commit('Удалены выделенные заметки', (st) => {
+    const b = ensureBoard(currentBoardTaskId);
+    b.clouds = b.clouds.filter((c) => !picks.includes(c.id));
+  });
+  selectedCloudIds = new Set();
 });
 
 document.getElementById('ungroupClouds').addEventListener('click', () => {
@@ -422,4 +453,5 @@ document.addEventListener('keydown', (e) => {
 
 window.addEventListener('hashchange', renderBoard);
 setHistoryOpen(false);
+setInstructionsOpen(false);
 renderAll();

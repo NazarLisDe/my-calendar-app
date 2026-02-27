@@ -42,8 +42,16 @@
       <button id="addCloud" type="button">Добавить заметку</button>
       <button id="groupClouds" type="button">Сгруппировать</button>
       <button id="ungroupClouds" type="button">Разгруппировать</button>
-      <span class="hint">Выделение: Ctrl + ЛКМ по заметке</span>
+      <button id="toggleInstructions" type="button" aria-expanded="false">Инструкция</button>
     </div>
+
+    <aside id="instructionsPanel" class="instructions-panel" aria-hidden="true">
+      <h3>Инструкция</h3>
+      <ul>
+        <li>Выделение заметки: <strong>Ctrl + ЛКМ</strong> по заметке.</li>
+        <li>Удаление выделенного: нажмите клавишу <strong>Delete</strong>.</li>
+      </ul>
+    </aside>
 
     <div id="boardCanvasWrapper" class="board-canvas-wrapper">
       <div id="boardCanvas" class="board-canvas"></div>

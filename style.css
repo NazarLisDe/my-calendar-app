@@ -194,6 +194,44 @@ main {
 .board-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .board-toolbar { margin: 10px 0; display: flex; gap: 8px; align-items: center; }
 
+
+.instructions-panel {
+  position: absolute;
+  top: 64px;
+  left: 12px;
+  right: 12px;
+  max-width: 560px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  transform: translateY(-12px);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 180ms ease, opacity 180ms ease;
+  z-index: 15;
+}
+
+.instructions-panel.open {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.instructions-panel h3 {
+  margin: 0 0 8px;
+}
+
+.instructions-panel ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-soft);
+}
+
+.instructions-panel strong {
+  color: var(--text);
+}
+
 .board-canvas-wrapper {
   border: 1px solid var(--border);
   background: var(--surface);
