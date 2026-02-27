@@ -8,7 +8,16 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>План на неделю</h1>
+    <div class="topbar-title-wrap">
+      <h1>План на неделю</h1>
+      <div class="space-menu-wrap">
+        <button id="spaceMenuToggle" type="button" aria-expanded="false">Пространство: Управление</button>
+        <div id="spaceMenu" class="space-menu hidden" role="menu">
+          <button type="button" class="space-option" data-space="management" role="menuitem">Управление</button>
+          <button type="button" class="space-option" data-space="notes" role="menuitem">Заметки</button>
+        </div>
+      </div>
+    </div>
     <div class="topbar-actions">
       <button id="themeToggle" type="button">Тёмная тема</button>
       <button id="clearUnpinned" type="button">Очистить незакреплённые</button>
@@ -62,6 +71,8 @@
     <li class="task" draggable="true">
       <span class="pin">📌</span>
       <button class="open-board" title="Открыть доску"></button>
+      <div class="task-tags"></div>
+      <button class="edit" title="Изменить задачу" type="button">✎</button>
       <button class="delete" title="Удалить" type="button">✕</button>
     </li>
   </template>
