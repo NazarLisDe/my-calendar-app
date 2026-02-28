@@ -340,7 +340,7 @@ function renderTaskDock(s) {
   toggle.textContent = `Задачи поля доски (${space.dockTasks.length})`;
 
   if (space.dockTasks.length === 0) {
-    const empty = document.createElement('p');
+    const empty = document.createElement('li');
     empty.className = 'task-dock-empty';
     empty.textContent = 'Пока нет задач. Добавьте задачу и откройте меню.';
     list.append(empty);
@@ -629,9 +629,12 @@ document.getElementById('exitPreview').addEventListener('click', () => {
   renderAll();
 });
 
-document.getElementById('toggleDockMenu').addEventListener('click', () => {
-  setDockMenuOpen(!isDockMenuOpen);
-});
+const toggleDockMenuButton = document.getElementById('toggleDockMenu');
+if (toggleDockMenuButton) {
+  toggleDockMenuButton.addEventListener('click', () => {
+    setDockMenuOpen(!isDockMenuOpen);
+  });
+}
 
 const dockTaskForm = document.getElementById('dockTaskForm');
 if (dockTaskForm) {
