@@ -1,0 +1,16 @@
+# Normalize text files to LF to avoid cross-platform line-ending conflicts
+* text=auto eol=lf
+
+# Treat common web assets as text explicitly
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.md text eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary

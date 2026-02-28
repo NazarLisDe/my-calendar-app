@@ -1,14 +1,31 @@
 const DAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
+const SPACES = {
+  management: 'Управление',
+  notes: 'Заметки'
+};
 
-const STORAGE_KEY = 'calendar-board-state-v1';
+const STORAGE_KEY = 'calendar-board-state-v3';
+const PREVIOUS_STORAGE_KEY = 'calendar-board-state-v2';
+const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
+
+function createSpaceState() {
+  return {
+    days: Object.fromEntries(DAYS.map((d) => [d, []])),
+    boardTasks: [],
+    boards: {}
+  };
+}
 
 const defaultState = () => ({
   theme: 'light',
+  activeSpace: 'management',
   nextTaskId: 1,
   nextCloudId: 1,
   nextGroupId: 1,
-  days: Object.fromEntries(DAYS.map((d) => [d, []])),
-  boards: {}
+  spaces: {
+    management: createSpaceState(),
+    notes: createSpaceState()
+  }
 });
 
 let state = loadState();
@@ -21,12 +38,61 @@ let dragCloud = null;
 let selectedCloudIds = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
+let isSpaceMenuOpen = false;
+
+function normalizeTask(task, fallbackId = null) {
+  return {
+    id: Number(task.id ?? fallbackId),
+    title: String(task.title || '').trim() || 'Без названия',
+    tags: Array.isArray(task.tags) ? task.tags : [],
+    pinned: Boolean(task.pinned),
+    createdAt: Number(task.createdAt || Date.now())
+  };
+}
 
 function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const raw = localStorage.getItem(STORAGE_KEY)
+    ?? localStorage.getItem(PREVIOUS_STORAGE_KEY)
+    ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+
   if (!raw) return defaultState();
+
   try {
-    return { ...defaultState(), ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    const base = defaultState();
+
+    if (parsed.spaces) {
+      const merged = {
+        ...base,
+        ...parsed,
+        spaces: {
+          management: { ...createSpaceState(), ...(parsed.spaces.management || {}) },
+          notes: { ...createSpaceState(), ...(parsed.spaces.notes || {}) }
+        }
+      };
+
+      for (const key of Object.keys(merged.spaces)) {
+        const sp = merged.spaces[key];
+        sp.boardTasks = Array.isArray(sp.boardTasks) ? sp.boardTasks.map((t) => normalizeTask(t, merged.nextTaskId++)) : [];
+        for (const day of DAYS) {
+          sp.days[day] = Array.isArray(sp.days[day]) ? sp.days[day].map((t) => normalizeTask(t, merged.nextTaskId++)) : [];
+        }
+      }
+      return merged;
+    }
+
+    return {
+      ...base,
+      ...parsed,
+      spaces: {
+        management: {
+          days: parsed.days || createSpaceState().days,
+          boardTasks: [],
+          boards: parsed.boards || {}
+        },
+        notes: createSpaceState()
+      }
+    };
   } catch {
     return defaultState();
   }
@@ -34,6 +100,64 @@ function loadState() {
 
 function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function effectiveState() {
+  return previewIndex === null ? state : history[previewIndex].snapshot;
+}
+
+function getActiveSpace(st = effectiveState()) {
+  const key = st.activeSpace in SPACES ? st.activeSpace : 'management';
+  return st.spaces[key];
+}
+
+function getTaskById(taskId, s = state) {
+  const space = getActiveSpace(s);
+  const boardTask = space.boardTasks.find((t) => t.id === taskId);
+  if (boardTask) return { task: boardTask, location: { type: 'board' } };
+
+  for (const day of DAYS) {
+    const task = space.days[day].find((t) => t.id === taskId);
+    if (task) return { task, location: { type: 'day', key: day } };
+  }
+  return null;
+}
+
+function ensureBoard(st, taskId) {
+  const space = getActiveSpace(st);
+  if (!space.boards[taskId]) {
+    space.boards[taskId] = { zoom: 1, clouds: [] };
+  }
+  return space.boards[taskId];
+}
+
+function getTaskCollection(space, location) {
+  if (location.type === 'board') return space.boardTasks;
+  return space.days[location.key];
+}
+
+function moveTask(st, from, to, taskId, targetTaskId = null, placeAfter = false) {
+  const space = getActiveSpace(st);
+  const source = getTaskCollection(space, from);
+  const destination = getTaskCollection(space, to);
+
+  const fromIdx = source.findIndex((t) => t.id === taskId);
+  if (fromIdx < 0) return;
+
+  const [task] = source.splice(fromIdx, 1);
+
+  if (targetTaskId === null || taskId === targetTaskId) {
+    destination.push(task);
+    return;
+  }
+
+  const targetIdx = destination.findIndex((t) => t.id === targetTaskId);
+  if (targetIdx < 0) {
+    destination.push(task);
+    return;
+  }
+
+  destination.splice(placeAfter ? targetIdx + 1 : targetIdx, 0, task);
 }
 
 function commit(description, mutator) {
@@ -46,20 +170,9 @@ function commit(description, mutator) {
   renderAll();
 }
 
-function effectiveState() {
-  return previewIndex === null ? state : history[previewIndex].snapshot;
-}
-
-function arrangeTasks(tasks) {
-  const pinned = tasks.filter((task) => task.pinned);
-  const regular = tasks.filter((task) => !task.pinned);
-  return [...pinned, ...regular];
-}
-
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  const toggle = document.getElementById('themeToggle');
-  toggle.textContent = theme === 'dark' ? 'Светлая тема' : 'Тёмная тема';
+  document.getElementById('themeToggle').textContent = theme === 'dark' ? 'Светлая тема' : 'Тёмная тема';
 }
 
 function setHistoryOpen(open) {
@@ -82,8 +195,103 @@ function setInstructionsOpen(open) {
   toggle.textContent = open ? 'Скрыть инструкцию' : 'Инструкция';
 }
 
+function setSpaceMenuOpen(open) {
+  isSpaceMenuOpen = open;
+  const menu = document.getElementById('spaceMenu');
+  const toggle = document.getElementById('spaceMenuToggle');
+  menu.classList.toggle('hidden', !open);
+  toggle.setAttribute('aria-expanded', String(open));
+}
+
+function updateSpaceButton(spaceKey) {
+  document.getElementById('spaceMenuToggle').textContent = `Пространство: ${SPACES[spaceKey]}`;
+}
+
+function renderTaskNode(task, location, dayLabel = '') {
+  const tpl = document.getElementById('taskTemplate');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+
+  if (task.pinned) node.classList.add('pinned');
+  node.querySelector('.open-board').textContent = task.title;
+  node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
+
+  const tags = task.tags || [];
+  node.querySelector('.task-tags').innerHTML = tags.map((tag) => `<span class="tag">#${tag}</span>`).join('');
+
+  node.querySelector('.edit').addEventListener('click', () => {
+    const nextTitleRaw = prompt('Название задачи', task.title);
+    if (nextTitleRaw === null) return;
+    const nextTitle = nextTitleRaw.trim();
+    if (!nextTitle) return;
+
+    const nextTagsRaw = prompt('Теги через запятую', (task.tags || []).join(', '));
+    if (nextTagsRaw === null) return;
+    const nextTags = [...new Set(nextTagsRaw.split(',').map((x) => x.trim()).filter(Boolean))];
+
+    commit(`Задача «${task.title}» изменена`, (st) => {
+      const found = getTaskById(task.id, st);
+      if (!found) return;
+      found.task.title = nextTitle;
+      found.task.tags = nextTags;
+    });
+  });
+
+  node.querySelector('.delete').addEventListener('click', () => {
+    commit(`Удалена задача «${task.title}»`, (st) => {
+      const space = getActiveSpace(st);
+      const collection = getTaskCollection(space, location);
+      const idx = collection.findIndex((t) => t.id === task.id);
+      if (idx >= 0) collection.splice(idx, 1);
+      delete space.boards[task.id];
+    });
+  });
+
+  node.addEventListener('contextmenu', (e) => {
+    if (location.type !== 'day') return;
+    e.preventDefault();
+    commit('Изменён статус закрепления', (st) => {
+      const t = getActiveSpace(st).days[dayLabel].find((x) => x.id === task.id);
+      if (t) t.pinned = !t.pinned;
+    });
+  });
+
+  node.addEventListener('dragstart', () => {
+    dragTask = { from: location, taskId: task.id };
+  });
+
+  node.addEventListener('dragover', (e) => e.preventDefault());
+  node.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (!dragTask) return;
+    const rect = node.getBoundingClientRect();
+    const placeAfter = e.clientY > rect.top + rect.height / 2;
+    commit('Изменён порядок задач', (st) => {
+      moveTask(st, dragTask.from, location, dragTask.taskId, task.id, placeAfter);
+    });
+    dragTask = null;
+  });
+
+  return node;
+}
+
+function setupDropZone(listEl, toLocation, description) {
+  listEl.ondragover = (e) => {
+    e.preventDefault();
+  };
+
+  listEl.ondrop = () => {
+    if (!dragTask) return;
+    commit(description, (st) => {
+      moveTask(st, dragTask.from, toLocation, dragTask.taskId);
+    });
+    dragTask = null;
+  };
+}
+
 function renderCalendar() {
   const s = effectiveState();
+  const space = getActiveSpace(s);
+
   const grid = document.getElementById('calendarGrid');
   grid.innerHTML = '';
 
@@ -100,64 +308,45 @@ function renderCalendar() {
       <ul class="tasks"></ul>
     `;
 
-    const form = col.querySelector('form');
+    const form = col.querySelector('.add-task');
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      const input = form.title;
-      const title = input.value.trim();
+      const title = form.title.value.trim();
       if (!title) return;
       commit(`Добавлена задача «${title}»`, (st) => {
-        st.days[day].push({ id: st.nextTaskId++, title, pinned: false, createdAt: Date.now() });
+        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, tags: [], pinned: false, createdAt: Date.now() });
       });
-    });
-
-    col.addEventListener('dragover', (e) => e.preventDefault());
-    col.addEventListener('drop', () => {
-      if (!dragTask) return;
-      const { fromDay, taskId } = dragTask;
-      if (fromDay === day) return;
-      commit(`Задача перенесена в «${day}»`, (st) => {
-        const idx = st.days[fromDay].findIndex((t) => t.id === taskId);
-        if (idx < 0) return;
-        const [task] = st.days[fromDay].splice(idx, 1);
-        st.days[day].push(task);
-      });
-      dragTask = null;
     });
 
     const list = col.querySelector('.tasks');
-    arrangeTasks(s.days[day]).forEach((task) => {
-      const tpl = document.getElementById('taskTemplate');
-      const node = tpl.content.firstElementChild.cloneNode(true);
-      if (task.pinned) node.classList.add('pinned');
-      node.querySelector('.open-board').textContent = task.title;
-      node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
+    setupDropZone(list, { type: 'day', key: day }, `Задача перемещена в «${day}»`);
 
-      node.querySelector('.delete').addEventListener('click', () => {
-        commit(`Удалена задача «${task.title}»`, (st) => {
-          st.days[day] = st.days[day].filter((t) => t.id !== task.id);
-          delete st.boards[task.id];
-        });
-      });
-
-      node.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        commit(`Изменён статус закрепления`, (st) => {
-          const t = st.days[day].find((x) => x.id === task.id);
-          if (t) t.pinned = !t.pinned;
-        });
-      });
-
-      node.addEventListener('dragstart', () => {
-        dragTask = { fromDay: day, taskId: task.id };
-      });
-
-      list.append(node);
+    space.days[day].forEach((task) => {
+      list.append(renderTaskNode(task, { type: 'day', key: day }, day));
     });
 
     grid.append(col);
   });
 
+  const boardTaskList = document.getElementById('boardTaskList');
+  boardTaskList.innerHTML = '';
+  setupDropZone(boardTaskList, { type: 'board' }, 'Задача перемещена в поле доски');
+
+  space.boardTasks.forEach((task) => {
+    boardTaskList.append(renderTaskNode(task, { type: 'board' }));
+  });
+
+  const boardTaskForm = document.getElementById('boardTaskForm');
+  boardTaskForm.onsubmit = (e) => {
+    e.preventDefault();
+    const title = boardTaskForm.title.value.trim();
+    if (!title) return;
+    commit(`Добавлена задача в поле доски «${title}»`, (st) => {
+      getActiveSpace(st).boardTasks.push({ id: st.nextTaskId++, title, tags: [], pinned: false, createdAt: Date.now() });
+    });
+  };
+
+  updateSpaceButton(s.activeSpace);
   applyTheme(s.theme);
 }
 
@@ -209,21 +398,6 @@ function renderHistory() {
   }
 }
 
-function getTaskById(taskId, s = state) {
-  for (const day of DAYS) {
-    const task = s.days[day].find((t) => t.id === taskId);
-    if (task) return { task, day };
-  }
-  return null;
-}
-
-function ensureBoard(taskId) {
-  if (!state.boards[taskId]) {
-    state.boards[taskId] = { zoom: 1, clouds: [] };
-  }
-  return state.boards[taskId];
-}
-
 function openBoard(taskId) {
   currentBoardTaskId = taskId;
   selectedCloudIds = new Set();
@@ -241,6 +415,7 @@ function renderBoard() {
   const taskId = Number(location.hash.split('/')[1]);
   currentBoardTaskId = taskId;
   const taskInfo = getTaskById(taskId, effectiveState());
+
   if (!taskInfo) {
     location.hash = '';
     return;
@@ -250,7 +425,7 @@ function renderBoard() {
   document.getElementById('boardView').classList.remove('hidden');
   document.getElementById('boardTitle').textContent = `Доска: ${taskInfo.task.title}`;
 
-  const board = ensureBoard(taskId);
+  const board = ensureBoard(state, taskId);
   const canvas = document.getElementById('boardCanvas');
   canvas.innerHTML = '';
   canvas.style.transform = `scale(${board.zoom})`;
@@ -261,14 +436,13 @@ function renderBoard() {
     el.className = 'cloud';
     if (cloud.groupId) el.classList.add('grouped');
     if (selectedCloudIds.has(cloud.id)) el.classList.add('selected');
-    el.dataset.id = cloud.id;
     el.style.left = `${cloud.x}px`;
     el.style.top = `${cloud.y}px`;
     el.innerHTML = `<textarea>${cloud.text || ''}</textarea>`;
 
     el.querySelector('textarea').addEventListener('change', (e) => {
       commit('Изменён текст заметки', (st) => {
-        const b = ensureBoard(taskId);
+        const b = ensureBoard(st, taskId);
         const c = b.clouds.find((x) => x.id === cloud.id);
         if (c) c.text = e.target.value;
       });
@@ -277,19 +451,14 @@ function renderBoard() {
     el.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (e.ctrlKey && !e.target.matches('textarea')) {
-        if (selectedCloudIds.has(cloud.id)) {
-          selectedCloudIds.delete(cloud.id);
-        } else {
-          selectedCloudIds.add(cloud.id);
-        }
+        if (selectedCloudIds.has(cloud.id)) selectedCloudIds.delete(cloud.id);
+        else selectedCloudIds.add(cloud.id);
         renderBoard();
         return;
       }
 
       if (e.target.matches('textarea')) return;
-      const startX = e.clientX;
-      const startY = e.clientY;
-      dragCloud = { id: cloud.id, startX, startY };
+      dragCloud = { id: cloud.id, startX: e.clientX, startY: e.clientY };
     });
 
     canvas.append(el);
@@ -298,7 +467,7 @@ function renderBoard() {
 
 document.addEventListener('mousemove', (e) => {
   if (!dragCloud || !currentBoardTaskId) return;
-  const board = ensureBoard(currentBoardTaskId);
+  const board = ensureBoard(state, currentBoardTaskId);
   const c = board.clouds.find((x) => x.id === dragCloud.id);
   if (!c) return;
 
@@ -333,6 +502,28 @@ function renderAll() {
   renderBoard();
 }
 
+document.getElementById('spaceMenuToggle').addEventListener('click', () => {
+  setSpaceMenuOpen(!isSpaceMenuOpen);
+});
+
+document.querySelectorAll('.space-option').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const nextSpace = btn.dataset.space;
+    if (!(nextSpace in SPACES)) return;
+
+    commit(`Переключено пространство на «${SPACES[nextSpace]}»`, (st) => {
+      st.activeSpace = nextSpace;
+    });
+
+    setSpaceMenuOpen(false);
+    if (location.hash.startsWith('#board/')) location.hash = '';
+  });
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
+});
+
 document.getElementById('themeToggle').addEventListener('click', () => {
   commit('Смена темы', (st) => {
     st.theme = st.theme === 'dark' ? 'light' : 'dark';
@@ -353,14 +544,17 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (isHistoryOpen) setHistoryOpen(false);
     if (isInstructionsOpen) setInstructionsOpen(false);
+    if (isSpaceMenuOpen) setSpaceMenuOpen(false);
   }
 });
 
 document.getElementById('clearUnpinned').addEventListener('click', () => {
   commit('Удалены незакреплённые задачи', (st) => {
+    const active = getActiveSpace(st);
     for (const day of DAYS) {
-      st.days[day] = st.days[day].filter((t) => t.pinned);
+      active.days[day] = active.days[day].filter((t) => t.pinned);
     }
+    active.boardTasks = active.boardTasks.filter((t) => t.pinned);
   });
 });
 
@@ -375,20 +569,18 @@ document.getElementById('backToCalendar').addEventListener('click', () => {
 });
 
 document.getElementById('addCloud').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId) return;
+  if (!currentBoardTaskId) return;
   commit('Добавлена заметка', (st) => {
-    const b = st.boards[taskId] || (st.boards[taskId] = { zoom: 1, clouds: [] });
+    const b = ensureBoard(st, currentBoardTaskId);
     b.clouds.push({ id: st.nextCloudId++, text: '', x: 50, y: 50, groupId: null });
   });
 });
 
 document.getElementById('groupClouds').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId || selectedCloudIds.size < 2) return;
+  if (!currentBoardTaskId || selectedCloudIds.size < 2) return;
   const picks = [...selectedCloudIds];
   commit('Создана группа заметок', (st) => {
-    const b = ensureBoard(taskId);
+    const b = ensureBoard(st, currentBoardTaskId);
     const gid = st.nextGroupId++;
     b.clouds.forEach((c) => {
       if (picks.includes(c.id)) c.groupId = gid;
@@ -402,18 +594,17 @@ document.addEventListener('keydown', (e) => {
   if (!location.hash.startsWith('#board/') || !currentBoardTaskId || selectedCloudIds.size === 0) return;
   const picks = [...selectedCloudIds];
   commit('Удалены выделенные заметки', (st) => {
-    const b = ensureBoard(currentBoardTaskId);
+    const b = ensureBoard(st, currentBoardTaskId);
     b.clouds = b.clouds.filter((c) => !picks.includes(c.id));
   });
   selectedCloudIds = new Set();
 });
 
 document.getElementById('ungroupClouds').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId || selectedCloudIds.size === 0) return;
+  if (!currentBoardTaskId || selectedCloudIds.size === 0) return;
   const picks = [...selectedCloudIds];
   commit('Разгруппировка заметок', (st) => {
-    const b = ensureBoard(taskId);
+    const b = ensureBoard(st, currentBoardTaskId);
     b.clouds.forEach((c) => {
       if (picks.includes(c.id)) c.groupId = null;
     });
@@ -421,19 +612,17 @@ document.getElementById('ungroupClouds').addEventListener('click', () => {
 });
 
 document.getElementById('zoomIn').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId) return;
+  if (!currentBoardTaskId) return;
   commit('Увеличен масштаб доски', (st) => {
-    const b = ensureBoard(taskId);
+    const b = ensureBoard(st, currentBoardTaskId);
     b.zoom = Math.min(2.5, b.zoom + 0.1);
   });
 });
 
 document.getElementById('zoomOut').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId) return;
+  if (!currentBoardTaskId) return;
   commit('Уменьшен масштаб доски', (st) => {
-    const b = ensureBoard(taskId);
+    const b = ensureBoard(st, currentBoardTaskId);
     b.zoom = Math.max(0.4, b.zoom - 0.1);
   });
 });
@@ -454,4 +643,5 @@ document.addEventListener('keydown', (e) => {
 window.addEventListener('hashchange', renderBoard);
 setHistoryOpen(false);
 setInstructionsOpen(false);
+setSpaceMenuOpen(false);
 renderAll();
