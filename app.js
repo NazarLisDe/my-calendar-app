@@ -38,6 +38,7 @@ let selectedCloudIds = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
 let isSpaceMenuOpen = false;
+let isDockMenuOpen = false;
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -148,6 +149,15 @@ function setSpaceMenuOpen(open) {
   isSpaceMenuOpen = open;
   const menu = document.getElementById('spaceMenu');
   const toggle = document.getElementById('spaceMenuToggle');
+  menu.classList.toggle('hidden', !open);
+  toggle.setAttribute('aria-expanded', String(open));
+}
+
+function setDockMenuOpen(open) {
+  isDockMenuOpen = open;
+  const menu = document.getElementById('taskDockMenu');
+  const toggle = document.getElementById('toggleDockMenu');
+  if (!menu || !toggle) return;
   menu.classList.toggle('hidden', !open);
   toggle.setAttribute('aria-expanded', String(open));
 }
@@ -324,8 +334,18 @@ function renderCalendar() {
 function renderTaskDock(s) {
   const space = getActiveSpace(s);
   const list = document.getElementById('taskDockList');
-  if (!list) return;
+  const toggle = document.getElementById('toggleDockMenu');
+  if (!list || !toggle) return;
   list.innerHTML = '';
+  toggle.textContent = `Задачи поля доски (${space.dockTasks.length})`;
+
+  if (space.dockTasks.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'task-dock-empty';
+    empty.textContent = 'Пока нет задач. Добавьте задачу и откройте меню.';
+    list.append(empty);
+    return;
+  }
 
   space.dockTasks.forEach((task) => {
     const tpl = document.getElementById('taskTemplate');
@@ -566,6 +586,7 @@ document.querySelectorAll('.space-option').forEach((btn) => {
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
+  if (!e.target.closest('.task-dock-menu-wrap')) setDockMenuOpen(false);
 });
 
 document.getElementById('themeToggle').addEventListener('click', () => {
@@ -589,6 +610,7 @@ document.addEventListener('keydown', (e) => {
     if (isHistoryOpen) setHistoryOpen(false);
     if (isInstructionsOpen) setInstructionsOpen(false);
     if (isSpaceMenuOpen) setSpaceMenuOpen(false);
+    if (isDockMenuOpen) setDockMenuOpen(false);
   }
 });
 
@@ -607,6 +629,13 @@ document.getElementById('exitPreview').addEventListener('click', () => {
   renderAll();
 });
 
+const toggleDockMenuButton = document.getElementById('toggleDockMenu');
+if (toggleDockMenuButton) {
+  toggleDockMenuButton.addEventListener('click', () => {
+    setDockMenuOpen(!isDockMenuOpen);
+  });
+}
+
 const dockTaskForm = document.getElementById('dockTaskForm');
 if (dockTaskForm) {
   dockTaskForm.addEventListener('submit', (e) => {
@@ -621,26 +650,28 @@ if (dockTaskForm) {
   });
 
   const dockList = document.getElementById('taskDockList');
-  dockList.addEventListener('dragover', (e) => e.preventDefault());
-  dockList.addEventListener('drop', () => {
-    if (!dragTask) return;
-    if (dragTask.fromDock) {
-      commit('Изменён порядок задач в поле доски', (st) => {
-        moveDockTask(st, dragTask.taskId);
-      });
-    } else {
-      const { fromDay, taskId } = dragTask;
-      commit('Задача перемещена в поле доски', (st) => {
-        const active = getActiveSpace(st);
-        const source = active.days[fromDay];
-        const idx = source.findIndex((t) => t.id === taskId);
-        if (idx < 0) return;
-        const [task] = source.splice(idx, 1);
-        active.dockTasks.push(task);
-      });
-    }
-    dragTask = null;
-  });
+  if (dockList) {
+    dockList.addEventListener('dragover', (e) => e.preventDefault());
+    dockList.addEventListener('drop', () => {
+      if (!dragTask) return;
+      if (dragTask.fromDock) {
+        commit('Изменён порядок задач в поле доски', (st) => {
+          moveDockTask(st, dragTask.taskId);
+        });
+      } else {
+        const { fromDay, taskId } = dragTask;
+        commit('Задача перемещена в поле доски', (st) => {
+          const active = getActiveSpace(st);
+          const source = active.days[fromDay];
+          const idx = source.findIndex((t) => t.id === taskId);
+          if (idx < 0) return;
+          const [task] = source.splice(idx, 1);
+          active.dockTasks.push(task);
+        });
+      }
+      dragTask = null;
+    });
+  }
 }
 
 document.getElementById('backToCalendar').addEventListener('click', () => {
@@ -729,4 +760,5 @@ window.addEventListener('hashchange', renderBoard);
 setHistoryOpen(false);
 setInstructionsOpen(false);
 setSpaceMenuOpen(false);
+setDockMenuOpen(false);
 renderAll();
