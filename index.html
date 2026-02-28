@@ -27,6 +27,21 @@
 
   <main id="calendarView">
     <section id="calendarGrid" class="calendar-grid"></section>
+    <section class="task-dock" aria-label="Поле доски задач">
+      <h2 class="task-dock-title">Поле доски задач</h2>
+      <div class="task-dock-toolbar">
+        <form id="dockTaskForm" class="add-task task-dock-form">
+          <input name="title" placeholder="Новая задача для поля доски" required />
+          <button type="submit">+</button>
+        </form>
+        <div class="task-dock-menu-wrap">
+          <button id="toggleDockMenu" type="button" aria-expanded="false">Задачи поля доски</button>
+          <div id="taskDockMenu" class="task-dock-menu hidden" role="menu">
+            <ul id="taskDockList" class="tasks" aria-label="Список задач поля доски"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
     <aside id="historyPanel" class="history-panel">
       <h2>История</h2>
       <p class="hint">Ctrl + Z — шаг назад</p>

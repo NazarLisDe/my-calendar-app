@@ -10,7 +10,8 @@ const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
 function createSpaceState() {
   return {
     days: Object.fromEntries(DAYS.map((d) => [d, []])),
-    boards: {}
+    boards: {},
+    dockTasks: []
   };
 }
 
@@ -37,6 +38,7 @@ let selectedCloudIds = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
 let isSpaceMenuOpen = false;
+let isDockMenuOpen = false;
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -62,7 +64,8 @@ function loadState() {
       spaces: {
         management: {
           days: parsed.days || createSpaceState().days,
-          boards: parsed.boards || {}
+          boards: parsed.boards || {},
+          dockTasks: parsed.dockTasks || []
         },
         notes: createSpaceState()
       }
@@ -87,6 +90,10 @@ function getTaskById(taskId, s = state) {
     const task = space.days[day].find((t) => t.id === taskId);
     if (task) return { task, day };
   }
+
+  const dockTask = space.dockTasks.find((t) => t.id === taskId);
+  if (dockTask) return { task: dockTask, day: null };
+
   return null;
 }
 
@@ -146,8 +153,39 @@ function setSpaceMenuOpen(open) {
   toggle.setAttribute('aria-expanded', String(open));
 }
 
+function setDockMenuOpen(open) {
+  isDockMenuOpen = open;
+  const menu = document.getElementById('taskDockMenu');
+  const toggle = document.getElementById('toggleDockMenu');
+  if (!menu || !toggle) return;
+  menu.classList.toggle('hidden', !open);
+  toggle.setAttribute('aria-expanded', String(open));
+}
+
 function updateSpaceButton(spaceKey) {
   document.getElementById('spaceMenuToggle').textContent = `Пространство: ${SPACES[spaceKey]}`;
+}
+
+function moveDockTask(st, taskId, targetTaskId = null, placeAfter = false) {
+  const space = getActiveSpace(st);
+  const list = space.dockTasks;
+  const fromIdx = list.findIndex((t) => t.id === taskId);
+  if (fromIdx < 0) return;
+
+  const [task] = list.splice(fromIdx, 1);
+  if (targetTaskId === null) {
+    list.push(task);
+    return;
+  }
+
+  const targetIdx = list.findIndex((t) => t.id === targetTaskId);
+  if (targetIdx < 0) {
+    list.push(task);
+    return;
+  }
+
+  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
+  list.splice(insertIdx, 0, task);
 }
 
 function moveTask(st, fromDay, toDay, taskId, targetTaskId = null, placeAfter = false) {
@@ -207,8 +245,18 @@ function renderCalendar() {
     list.addEventListener('dragover', (e) => e.preventDefault());
     list.addEventListener('drop', () => {
       if (!dragTask) return;
-      const { fromDay, taskId } = dragTask;
-      commit(`Задача перемещена в «${day}»`, (st) => moveTask(st, fromDay, day, taskId));
+      if (dragTask.fromDock) {
+        commit(`Задача перемещена из поля доски в «${day}»`, (st) => {
+          const active = getActiveSpace(st);
+          const idx = active.dockTasks.findIndex((t) => t.id === dragTask.taskId);
+          if (idx < 0) return;
+          const [task] = active.dockTasks.splice(idx, 1);
+          active.days[day].push(task);
+        });
+      } else {
+        const { fromDay, taskId } = dragTask;
+        commit(`Задача перемещена в «${day}»`, (st) => moveTask(st, fromDay, day, taskId));
+      }
       dragTask = null;
     });
 
@@ -256,7 +304,7 @@ function renderCalendar() {
       });
 
       node.addEventListener('dragstart', () => {
-        dragTask = { fromDay: day, taskId: task.id };
+        dragTask = { fromDay: day, taskId: task.id, fromDock: false };
       });
 
       node.addEventListener('dragover', (e) => e.preventDefault());
@@ -278,8 +326,89 @@ function renderCalendar() {
     grid.append(col);
   });
 
+  renderTaskDock(s);
   updateSpaceButton(s.activeSpace);
   applyTheme(s.theme);
+}
+
+function renderTaskDock(s) {
+  const space = getActiveSpace(s);
+  const list = document.getElementById('taskDockList');
+  const toggle = document.getElementById('toggleDockMenu');
+  if (!list || !toggle) return;
+  list.innerHTML = '';
+  toggle.textContent = `Задачи поля доски (${space.dockTasks.length})`;
+
+  if (space.dockTasks.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'task-dock-empty';
+    empty.textContent = 'Пока нет задач. Добавьте задачу и откройте меню.';
+    list.append(empty);
+    return;
+  }
+
+  space.dockTasks.forEach((task) => {
+    const tpl = document.getElementById('taskTemplate');
+    const node = tpl.content.firstElementChild.cloneNode(true);
+    if (task.pinned) node.classList.add('pinned');
+    node.querySelector('.open-board').textContent = task.title;
+    node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
+
+    const tagWrap = node.querySelector('.task-tags');
+    const tags = task.tags || [];
+    tagWrap.innerHTML = tags.map((tag) => `<span class="tag">#${tag}</span>`).join('');
+
+    node.querySelector('.edit').addEventListener('click', () => {
+      const newTitle = prompt('Название задачи', task.title);
+      if (newTitle === null) return;
+      const cleanTitle = newTitle.trim();
+      if (!cleanTitle) return;
+      const tagInput = prompt('Теги через запятую', (task.tags || []).join(', '));
+      if (tagInput === null) return;
+      const nextTags = [...new Set(tagInput.split(',').map((x) => x.trim()).filter(Boolean))];
+      commit(`Задача «${task.title}» изменена`, (st) => {
+        const t = getActiveSpace(st).dockTasks.find((x) => x.id === task.id);
+        if (!t) return;
+        t.title = cleanTitle;
+        t.tags = nextTags;
+      });
+    });
+
+    node.querySelector('.delete').addEventListener('click', () => {
+      commit(`Удалена задача «${task.title}»`, (st) => {
+        const active = getActiveSpace(st);
+        active.dockTasks = active.dockTasks.filter((t) => t.id !== task.id);
+        delete active.boards[task.id];
+      });
+    });
+
+    node.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      commit('Изменён статус закрепления', (st) => {
+        const t = getActiveSpace(st).dockTasks.find((x) => x.id === task.id);
+        if (t) t.pinned = !t.pinned;
+      });
+    });
+
+    node.addEventListener('dragstart', () => {
+      dragTask = { fromDay: null, taskId: task.id, fromDock: true };
+    });
+
+    node.addEventListener('dragover', (e) => e.preventDefault());
+    node.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragTask || !dragTask.fromDock) return;
+      const rect = node.getBoundingClientRect();
+      const placeAfter = e.clientY > rect.top + rect.height / 2;
+      const { taskId } = dragTask;
+      commit('Изменён порядок задач в поле доски', (st) => {
+        moveDockTask(st, taskId, task.id, placeAfter);
+      });
+      dragTask = null;
+    });
+
+    list.append(node);
+  });
 }
 
 function renderHistory() {
@@ -457,6 +586,7 @@ document.querySelectorAll('.space-option').forEach((btn) => {
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
+  if (!e.target.closest('.task-dock-menu-wrap')) setDockMenuOpen(false);
 });
 
 document.getElementById('themeToggle').addEventListener('click', () => {
@@ -480,6 +610,7 @@ document.addEventListener('keydown', (e) => {
     if (isHistoryOpen) setHistoryOpen(false);
     if (isInstructionsOpen) setInstructionsOpen(false);
     if (isSpaceMenuOpen) setSpaceMenuOpen(false);
+    if (isDockMenuOpen) setDockMenuOpen(false);
   }
 });
 
@@ -489,6 +620,7 @@ document.getElementById('clearUnpinned').addEventListener('click', () => {
     for (const day of DAYS) {
       active.days[day] = active.days[day].filter((t) => t.pinned);
     }
+    active.dockTasks = active.dockTasks.filter((t) => t.pinned);
   });
 });
 
@@ -496,6 +628,48 @@ document.getElementById('exitPreview').addEventListener('click', () => {
   previewIndex = null;
   renderAll();
 });
+
+document.getElementById('toggleDockMenu').addEventListener('click', () => {
+  setDockMenuOpen(!isDockMenuOpen);
+});
+
+const dockTaskForm = document.getElementById('dockTaskForm');
+if (dockTaskForm) {
+  dockTaskForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = dockTaskForm.title;
+    const title = input.value.trim();
+    if (!title) return;
+    commit(`Добавлена задача в поле доски «${title}»`, (st) => {
+      getActiveSpace(st).dockTasks.push({ id: st.nextTaskId++, title, tags: [], pinned: false, createdAt: Date.now() });
+    });
+    dockTaskForm.reset();
+  });
+
+  const dockList = document.getElementById('taskDockList');
+  if (dockList) {
+    dockList.addEventListener('dragover', (e) => e.preventDefault());
+    dockList.addEventListener('drop', () => {
+      if (!dragTask) return;
+      if (dragTask.fromDock) {
+        commit('Изменён порядок задач в поле доски', (st) => {
+          moveDockTask(st, dragTask.taskId);
+        });
+      } else {
+        const { fromDay, taskId } = dragTask;
+        commit('Задача перемещена в поле доски', (st) => {
+          const active = getActiveSpace(st);
+          const source = active.days[fromDay];
+          const idx = source.findIndex((t) => t.id === taskId);
+          if (idx < 0) return;
+          const [task] = source.splice(idx, 1);
+          active.dockTasks.push(task);
+        });
+      }
+      dragTask = null;
+    });
+  }
+}
 
 document.getElementById('backToCalendar').addEventListener('click', () => {
   location.hash = '';
@@ -583,4 +757,5 @@ window.addEventListener('hashchange', renderBoard);
 setHistoryOpen(false);
 setInstructionsOpen(false);
 setSpaceMenuOpen(false);
+setDockMenuOpen(false);
 renderAll();
