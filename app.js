@@ -462,34 +462,32 @@ function renderHistory() {
 function openBoard(taskId) {
   currentBoardTaskId = taskId;
   selectedCloudIds = new Set();
-  location.hash = `board/${taskId}`;
   renderBoard();
 }
 
 function renderBoard() {
-  if (!location.hash.startsWith('#board/')) {
-    document.getElementById('calendarView').classList.remove('hidden');
-    document.getElementById('boardView').classList.add('hidden');
-    return;
-  }
-
-  const taskId = Number(location.hash.split('/')[1]);
-  currentBoardTaskId = taskId;
-  const taskInfo = getTaskById(taskId, effectiveState());
-  if (!taskInfo) {
-    location.hash = '';
-    return;
-  }
-
-  document.getElementById('calendarView').classList.add('hidden');
-  document.getElementById('boardView').classList.remove('hidden');
-  document.getElementById('boardTitle').textContent = `Доска: ${taskInfo.task.title}`;
-
-  const board = ensureBoard(state, taskId);
+  const boardTitle = document.getElementById('boardTitle');
   const canvas = document.getElementById('boardCanvas');
+  const zoomValue = document.getElementById('zoomValue');
+  if (!boardTitle || !canvas || !zoomValue) return;
+
+  const taskInfo = currentBoardTaskId ? getTaskById(currentBoardTaskId, effectiveState()) : null;
+  if (!taskInfo) {
+    currentBoardTaskId = null;
+    canvas.innerHTML = '<div class="board-placeholder">Выберите задачу в календаре, чтобы открыть её доску.</div>';
+    canvas.style.transform = 'scale(1)';
+    zoomValue.textContent = '100%';
+    boardTitle.textContent = 'Поле доски';
+    return;
+  }
+
+  boardTitle.textContent = `Доска: ${taskInfo.task.title}`;
+
+  const activeTaskId = taskInfo.task.id;
+  const board = ensureBoard(state, activeTaskId);
   canvas.innerHTML = '';
   canvas.style.transform = `scale(${board.zoom})`;
-  document.getElementById('zoomValue').textContent = `${Math.round(board.zoom * 100)}%`;
+  zoomValue.textContent = `${Math.round(board.zoom * 100)}%`;
 
   board.clouds.forEach((cloud) => {
     const el = document.createElement('div');
@@ -503,7 +501,7 @@ function renderBoard() {
 
     el.querySelector('textarea').addEventListener('change', (e) => {
       commit('Изменён текст заметки', (st) => {
-        const b = ensureBoard(st, taskId);
+        const b = ensureBoard(st, activeTaskId);
         const c = b.clouds.find((x) => x.id === cloud.id);
         if (c) c.text = e.target.value;
       });
@@ -578,9 +576,7 @@ document.querySelectorAll('.space-option').forEach((btn) => {
       st.activeSpace = nextSpace;
     });
     setSpaceMenuOpen(false);
-    if (location.hash.startsWith('#board/')) {
-      location.hash = '';
-    }
+    currentBoardTaskId = null;
   });
 });
 
@@ -675,7 +671,8 @@ if (dockTaskForm) {
 }
 
 document.getElementById('backToCalendar').addEventListener('click', () => {
-  location.hash = '';
+  currentBoardTaskId = null;
+  selectedCloudIds = new Set();
   renderBoard();
 });
 
@@ -704,7 +701,7 @@ document.getElementById('groupClouds').addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Delete') return;
   if (e.target.matches('input, textarea, [contenteditable="true"]')) return;
-  if (!location.hash.startsWith('#board/') || !currentBoardTaskId || selectedCloudIds.size === 0) return;
+  if (!currentBoardTaskId || selectedCloudIds.size === 0) return;
   const picks = [...selectedCloudIds];
   commit('Удалены выделенные заметки', (st) => {
     const b = ensureBoard(st, currentBoardTaskId);
@@ -756,7 +753,6 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-window.addEventListener('hashchange', renderBoard);
 setHistoryOpen(false);
 setInstructionsOpen(false);
 setSpaceMenuOpen(false);

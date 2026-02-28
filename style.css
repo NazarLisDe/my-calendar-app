@@ -228,6 +228,14 @@ main {
 .hidden { display: none !important; }
 
 .board-view { padding: 12px; }
+
+.board-inline {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding: 12px 0 0;
+  position: relative;
+}
+
 .board-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .board-toolbar { margin: 10px 0; display: flex; gap: 8px; align-items: center; }
 
@@ -274,6 +282,16 @@ main {
   position: relative;
   background-image: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--border) 80%, transparent) 1px, transparent 0);
   background-size: 24px 24px;
+}
+
+.board-placeholder {
+  margin: 12px;
+  padding: 10px 12px;
+  max-width: 440px;
+  color: var(--text-soft);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
 }
 
 .cloud {
