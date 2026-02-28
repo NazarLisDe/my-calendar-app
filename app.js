@@ -275,14 +275,17 @@ function renderTaskNode(task, location, dayLabel = '') {
 }
 
 function setupDropZone(listEl, toLocation, description) {
-  listEl.addEventListener('dragover', (e) => e.preventDefault());
-  listEl.addEventListener('drop', () => {
+  listEl.ondragover = (e) => {
+    e.preventDefault();
+  };
+
+  listEl.ondrop = () => {
     if (!dragTask) return;
     commit(description, (st) => {
       moveTask(st, dragTask.from, toLocation, dragTask.taskId);
     });
     dragTask = null;
-  });
+  };
 }
 
 function renderCalendar() {
