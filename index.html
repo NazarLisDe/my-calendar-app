@@ -8,7 +8,16 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>План на неделю</h1>
+    <div class="topbar-title-wrap">
+      <h1>План на неделю</h1>
+      <div class="space-menu-wrap">
+        <button id="spaceMenuToggle" type="button" aria-expanded="false">Пространство: Управление</button>
+        <div id="spaceMenu" class="space-menu hidden" role="menu">
+          <button type="button" class="space-option" data-space="management" role="menuitem">Управление</button>
+          <button type="button" class="space-option" data-space="notes" role="menuitem">Заметки</button>
+        </div>
+      </div>
+    </div>
     <div class="topbar-actions">
       <button id="themeToggle" type="button">Тёмная тема</button>
       <button id="clearUnpinned" type="button">Очистить незакреплённые</button>
@@ -17,7 +26,20 @@
   </header>
 
   <main id="calendarView">
-    <section id="calendarGrid" class="calendar-grid"></section>
+    <section class="calendar-layout">
+      <section id="calendarGrid" class="calendar-grid"></section>
+
+      <section class="task-board-field">
+        <h2>Поле доски</h2>
+        <p class="hint">Добавляйте задачи сюда и перетаскивайте в дни недели или меняйте порядок прямо в поле.</p>
+        <form id="boardTaskForm" class="add-task">
+          <input name="title" placeholder="Новая задача в поле доски" required />
+          <button type="submit">+</button>
+        </form>
+        <ul id="boardTaskList" class="tasks board-tasks" data-drop-zone="board"></ul>
+      </section>
+    </section>
+
     <aside id="historyPanel" class="history-panel">
       <h2>История</h2>
       <p class="hint">Ctrl + Z — шаг назад</p>
@@ -62,6 +84,8 @@
     <li class="task" draggable="true">
       <span class="pin">📌</span>
       <button class="open-board" title="Открыть доску"></button>
+      <div class="task-tags"></div>
+      <button class="edit" title="Изменить задачу" type="button">✎</button>
       <button class="delete" title="Удалить" type="button">✕</button>
     </li>
   </template>
