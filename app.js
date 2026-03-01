@@ -230,7 +230,6 @@ function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, pl
   const taskFromCloud = {
     id: st.nextTaskId++,
     title: extractTaskTitleFromCloudText(cloud.text),
-    tags: ['note'],
     pinned: false,
     createdAt: Date.now()
   };
@@ -249,6 +248,57 @@ function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, pl
 
   const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
   destination.splice(insertIdx, 0, taskFromCloud);
+}
+
+function enableInlineTaskTitleEdit(node, task, day) {
+  const titleButton = node.querySelector('.open-board');
+  if (!titleButton) return;
+
+  const input = document.createElement('input');
+  input.className = 'task-title-input hidden';
+  input.type = 'text';
+  input.value = task.title;
+  input.maxLength = 200;
+  titleButton.insertAdjacentElement('afterend', input);
+
+  let editing = false;
+  const startEdit = () => {
+    editing = true;
+    input.value = task.title;
+    titleButton.classList.add('hidden');
+    input.classList.remove('hidden');
+    input.focus();
+    input.select();
+  };
+
+  const finishEdit = (save) => {
+    if (!editing) return;
+    editing = false;
+    input.classList.add('hidden');
+    titleButton.classList.remove('hidden');
+
+    if (!save) return;
+    const cleanTitle = input.value.trim();
+    if (!cleanTitle || cleanTitle === task.title) return;
+    commit(`Задача «${task.title}» изменена`, (st) => {
+      const t = getActiveSpace(st).days[day].find((x) => x.id === task.id);
+      if (!t) return;
+      t.title = cleanTitle;
+    });
+  };
+
+  node.querySelector('.edit').addEventListener('click', () => startEdit());
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      finishEdit(true);
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      finishEdit(false);
+    }
+  });
+  input.addEventListener('blur', () => finishEdit(true));
 }
 
 function renderCalendar() {
@@ -270,6 +320,29 @@ function renderCalendar() {
       <ul class="tasks"></ul>
     `;
 
+    const handleDayDrop = (targetTaskId = null, placeAfter = false) => {
+      if (dragCloudNote) {
+        const { boardTaskId, cloudId } = dragCloudNote;
+        commit(`Заметка преобразована в задачу дня «${day}»`, (st) => {
+          moveCloudToDay(st, boardTaskId, cloudId, day, targetTaskId, placeAfter);
+        });
+        dragCloudNote = null;
+        return true;
+      }
+
+      if (!dragTask) return false;
+      const { fromDay, taskId } = dragTask;
+      if (targetTaskId === null) {
+        commit(`Задача перемещена в «${day}»`, (st) => moveTask(st, fromDay, day, taskId));
+      } else {
+        commit('Изменён порядок задач', (st) => {
+          moveTask(st, fromDay, day, taskId, targetTaskId, placeAfter);
+        });
+      }
+      dragTask = null;
+      return true;
+    };
+
     const form = col.querySelector('form');
     form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -277,36 +350,23 @@ function renderCalendar() {
       const title = input.value.trim();
       if (!title) return;
       commit(`Добавлена задача «${title}»`, (st) => {
-        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, tags: [], pinned: false, createdAt: Date.now() });
+        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, pinned: false, createdAt: Date.now() });
       });
     });
 
     const list = col.querySelector('.tasks');
-    list.addEventListener('dragover', (e) => e.preventDefault());
-    list.addEventListener('drop', () => {
-      if (dragCloudNote) {
-        const { boardTaskId, cloudId } = dragCloudNote;
-        commit(`Заметка преобразована в задачу дня «${day}»`, (st) => {
-          moveCloudToDay(st, boardTaskId, cloudId, day);
-        });
-        dragCloudNote = null;
-        return;
-      }
+    col.addEventListener('dragover', (e) => {
+      if (dragTask || dragCloudNote) e.preventDefault();
+    });
+    col.addEventListener('drop', (e) => {
+      e.preventDefault();
+      handleDayDrop();
+    });
 
-      if (!dragTask) return;
-      if (dragTask.fromDock) {
-        commit(`Задача перемещена из поля доски в «${day}»`, (st) => {
-          const active = getActiveSpace(st);
-          const idx = active.dockTasks.findIndex((t) => t.id === dragTask.taskId);
-          if (idx < 0) return;
-          const [task] = active.dockTasks.splice(idx, 1);
-          active.days[day].push(task);
-        });
-      } else {
-        const { fromDay, taskId } = dragTask;
-        commit(`Задача перемещена в «${day}»`, (st) => moveTask(st, fromDay, day, taskId));
-      }
-      dragTask = null;
+    list.addEventListener('dragover', (e) => e.preventDefault());
+    list.addEventListener('drop', (e) => {
+      e.preventDefault();
+      handleDayDrop();
     });
 
     space.days[day].forEach((task) => {
@@ -315,26 +375,7 @@ function renderCalendar() {
       if (task.pinned) node.classList.add('pinned');
       node.querySelector('.open-board').textContent = task.title;
       node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
-
-      const tagWrap = node.querySelector('.task-tags');
-      const tags = task.tags || [];
-      tagWrap.innerHTML = tags.map((tag) => `<span class="tag">#${tag}</span>`).join('');
-
-      node.querySelector('.edit').addEventListener('click', () => {
-        const newTitle = prompt('Название задачи', task.title);
-        if (newTitle === null) return;
-        const cleanTitle = newTitle.trim();
-        if (!cleanTitle) return;
-        const tagInput = prompt('Теги через запятую', (task.tags || []).join(', '));
-        if (tagInput === null) return;
-        const nextTags = [...new Set(tagInput.split(',').map((x) => x.trim()).filter(Boolean))];
-        commit(`Задача «${task.title}» изменена`, (st) => {
-          const t = getActiveSpace(st).days[day].find((x) => x.id === task.id);
-          if (!t) return;
-          t.title = cleanTitle;
-          t.tags = nextTags;
-        });
-      });
+      enableInlineTaskTitleEdit(node, task, day);
 
       node.querySelector('.delete').addEventListener('click', () => {
         commit(`Удалена задача «${task.title}»`, (st) => {
@@ -361,22 +402,7 @@ function renderCalendar() {
         e.preventDefault();
         const rect = node.getBoundingClientRect();
         const placeAfter = e.clientY > rect.top + rect.height / 2;
-
-        if (dragCloudNote) {
-          const { boardTaskId, cloudId } = dragCloudNote;
-          commit('Заметка преобразована в задачу с позиционированием', (st) => {
-            moveCloudToDay(st, boardTaskId, cloudId, day, task.id, placeAfter);
-          });
-          dragCloudNote = null;
-          return;
-        }
-
-        if (!dragTask) return;
-        const { fromDay, taskId } = dragTask;
-        commit('Изменён порядок задач', (st) => {
-          moveTask(st, fromDay, day, taskId, task.id, placeAfter);
-        });
-        dragTask = null;
+        handleDayDrop(task.id, placeAfter);
       });
 
       list.append(node);
