@@ -10,8 +10,8 @@ const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
 function createSpaceState() {
   return {
     days: Object.fromEntries(DAYS.map((d) => [d, []])),
-    boards: {},
-    dockTasks: []
+    dayBackgrounds: Object.fromEntries(DAYS.map((d) => [d, null])),
+    boards: {}
   };
 }
 
@@ -35,6 +35,7 @@ let currentBoardTaskId = null;
 let dragTask = null;
 let dragCloud = null;
 let dragCloudNote = null;
+let dragBackgroundTask = null;
 let selectedCloudIds = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
@@ -65,8 +66,8 @@ function loadState() {
       spaces: {
         management: {
           days: parsed.days || createSpaceState().days,
-          boards: parsed.boards || {},
-          dockTasks: parsed.dockTasks || []
+          dayBackgrounds: parsed.dayBackgrounds || createSpaceState().dayBackgrounds,
+          boards: parsed.boards || {}
         },
         notes: createSpaceState()
       }
@@ -311,8 +312,11 @@ function renderCalendar() {
     const col = document.createElement('div');
     col.className = 'day-column';
     col.dataset.day = day;
+    const dayBackgroundTitle = space.dayBackgrounds?.[day] || null;
     col.innerHTML = `
       <h3 class="day-header">${day}</h3>
+      <button class="clear-day-bg ${dayBackgroundTitle ? '' : 'hidden'}" type="button" title="Убрать фон дня">✕ фон</button>
+      <div class="day-background-label ${dayBackgroundTitle ? '' : 'hidden'}">${dayBackgroundTitle || ''}</div>
       <form class="add-task">
         <input name="title" placeholder="Новая задача" required />
         <button type="submit">+</button>
@@ -321,6 +325,22 @@ function renderCalendar() {
     `;
 
     const handleDayDrop = (targetTaskId = null, placeAfter = false) => {
+      if (dragBackgroundTask) {
+        const { fromDay, taskId, title } = dragBackgroundTask;
+        commit(`Задача «${title}» перенесена на фон дня «${day}»`, (st) => {
+          const active = getActiveSpace(st);
+          const source = active.days[fromDay];
+          const idx = source.findIndex((t) => t.id === taskId);
+          if (idx < 0) return;
+          const [task] = source.splice(idx, 1);
+          active.dayBackgrounds[day] = task.title;
+          delete active.boards[task.id];
+          if (currentBoardTaskId === task.id) currentBoardTaskId = null;
+        });
+        dragBackgroundTask = null;
+        return true;
+      }
+
       if (dragCloudNote) {
         const { boardTaskId, cloudId } = dragCloudNote;
         commit(`Заметка преобразована в задачу дня «${day}»`, (st) => {
@@ -354,9 +374,16 @@ function renderCalendar() {
       });
     });
 
+    const clearBg = col.querySelector('.clear-day-bg');
+    clearBg.addEventListener('click', () => {
+      commit(`Очищен фон дня «${day}»`, (st) => {
+        getActiveSpace(st).dayBackgrounds[day] = null;
+      });
+    });
+
     const list = col.querySelector('.tasks');
     col.addEventListener('dragover', (e) => {
-      if (dragTask || dragCloudNote) e.preventDefault();
+      if (dragTask || dragCloudNote || dragBackgroundTask) e.preventDefault();
     });
     col.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -377,6 +404,18 @@ function renderCalendar() {
       node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
       enableInlineTaskTitleEdit(node, task, day);
 
+      const toBackground = node.querySelector('.to-background');
+      toBackground.addEventListener('dragstart', (e) => {
+        dragBackgroundTask = { fromDay: day, taskId: task.id, title: task.title };
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', task.title);
+        }
+      });
+      toBackground.addEventListener('dragend', () => {
+        dragBackgroundTask = null;
+      });
+
       node.querySelector('.delete').addEventListener('click', () => {
         commit(`Удалена задача «${task.title}»`, (st) => {
           const active = getActiveSpace(st);
@@ -393,8 +432,9 @@ function renderCalendar() {
         });
       });
 
-      node.addEventListener('dragstart', () => {
-        dragTask = { fromDay: day, taskId: task.id, fromDock: false };
+      node.addEventListener('dragstart', (e) => {
+        if (e.target.closest('.to-background')) return;
+        dragTask = { fromDay: day, taskId: task.id };
       });
 
       node.addEventListener('dragover', (e) => e.preventDefault());

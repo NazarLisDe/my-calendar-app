@@ -118,10 +118,43 @@ main {
   border-radius: 14px;
   padding: 10px;
   min-height: 480px;
+  position: relative;
+  overflow: hidden;
 }
 
-.day-header { margin: 0 0 8px; font-size: 15px; color: var(--text-soft); }
+.day-header { margin: 0 0 8px; font-size: 15px; color: var(--text-soft); position: relative; z-index: 2; }
 .add-task { display: flex; gap: 6px; margin-bottom: 10px; min-width: 0; }
+
+.clear-day-bg {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  z-index: 3;
+}
+
+.day-background-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 10px 10px;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--text-soft) 26%, transparent);
+  pointer-events: none;
+  user-select: none;
+}
+
+.day-column .add-task,
+.day-column .tasks {
+  position: relative;
+  z-index: 2;
+}
+
 
 .add-task input {
   flex: 1;
@@ -148,8 +181,8 @@ main {
   border-radius: 10px;
   padding: 8px;
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  grid-template-areas: 'pin title edit delete';
+  grid-template-columns: auto 1fr auto auto auto;
+  grid-template-areas: 'pin title bg edit delete';
   align-items: center;
   gap: 6px;
   cursor: grab;
@@ -158,12 +191,14 @@ main {
 .task .pin { grid-area: pin; visibility: hidden; }
 .task.pinned .pin { visibility: visible; }
 .task .open-board { grid-area: title; }
+.task .to-background { grid-area: bg; }
 .task .edit { grid-area: edit; }
 .task .delete { grid-area: delete; }
 
 .task .open-board,
 .task .delete,
-.task .edit {
+.task .edit,
+.task .to-background {
   border: 0;
   background: transparent;
   padding: 0;
@@ -372,4 +407,8 @@ main {
 
 .dock-tasks .task:last-child {
   margin-bottom: 0;
+}
+
+.task .to-background {
+  color: var(--text-soft);
 }
