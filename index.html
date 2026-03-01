@@ -27,6 +27,39 @@
 
   <main id="calendarView">
     <section id="calendarGrid" class="calendar-grid"></section>
+
+    <section id="boardView" class="board-view board-inline">
+      <div class="board-header">
+        <button id="backToCalendar" type="button">Сбросить выбор задачи</button>
+        <h2 id="boardTitle">Поле доски</h2>
+        <div class="board-controls">
+          <button id="zoomOut" type="button">−</button>
+          <span id="zoomValue">100%</span>
+          <button id="zoomIn" type="button">+</button>
+        </div>
+      </div>
+
+      <div class="board-toolbar">
+        <button id="addCloud" type="button">Добавить заметку</button>
+        <button id="groupClouds" type="button">Сгруппировать</button>
+        <button id="ungroupClouds" type="button">Разгруппировать</button>
+        <button id="toggleInstructions" type="button" aria-expanded="false">Инструкция</button>
+      </div>
+
+      <aside id="instructionsPanel" class="instructions-panel" aria-hidden="true">
+        <h3>Инструкция</h3>
+        <ul>
+          <li>Выберите задачу в колонке, чтобы открыть её доску внизу.</li>
+          <li>Выделение заметки: <strong>Ctrl + ЛКМ</strong> по заметке.</li>
+          <li>Удаление выделенного: нажмите клавишу <strong>Delete</strong>.</li>
+        </ul>
+      </aside>
+
+      <div id="boardCanvasWrapper" class="board-canvas-wrapper">
+        <div id="boardCanvas" class="board-canvas"></div>
+      </div>
+    </section>
+
     <aside id="historyPanel" class="history-panel">
       <h2>История</h2>
       <p class="hint">Ctrl + Z — шаг назад</p>
@@ -36,42 +69,14 @@
     </aside>
   </main>
 
-  <section id="boardView" class="hidden board-view">
-    <div class="board-header">
-      <button id="backToCalendar" type="button">← К календарю</button>
-      <h2 id="boardTitle"></h2>
-      <div class="board-controls">
-        <button id="zoomOut" type="button">−</button>
-        <span id="zoomValue">100%</span>
-        <button id="zoomIn" type="button">+</button>
-      </div>
-    </div>
-
-    <div class="board-toolbar">
-      <button id="addCloud" type="button">Добавить заметку</button>
-      <button id="groupClouds" type="button">Сгруппировать</button>
-      <button id="ungroupClouds" type="button">Разгруппировать</button>
-      <button id="toggleInstructions" type="button" aria-expanded="false">Инструкция</button>
-    </div>
-
-    <aside id="instructionsPanel" class="instructions-panel" aria-hidden="true">
-      <h3>Инструкция</h3>
-      <ul>
-        <li>Выделение заметки: <strong>Ctrl + ЛКМ</strong> по заметке.</li>
-        <li>Удаление выделенного: нажмите клавишу <strong>Delete</strong>.</li>
-      </ul>
-    </aside>
-
-    <div id="boardCanvasWrapper" class="board-canvas-wrapper">
-      <div id="boardCanvas" class="board-canvas"></div>
-    </div>
-  </section>
-
   <template id="taskTemplate">
     <li class="task" draggable="true">
       <span class="pin">📌</span>
       <button class="open-board" title="Открыть доску"></button>
-      <div class="task-tags"></div>
+      <button class="to-background" title="Перенести на фон дня" type="button" draggable="true">⬒</button>
+      <label class="task-color-wrap" title="Цвет задачи">
+        <input class="task-color" type="color" value="#5a6cff" />
+      </label>
       <button class="edit" title="Изменить задачу" type="button">✎</button>
       <button class="delete" title="Удалить" type="button">✕</button>
     </li>
