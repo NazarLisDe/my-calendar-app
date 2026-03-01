@@ -307,8 +307,8 @@ function buildDayBackgroundPattern(title) {
   const clean = (title || '').trim();
   if (!clean) return '';
   const chunk = `${clean}   ✦   `;
-  const row = chunk.repeat(5).trim();
-  return Array.from({ length: 7 }, () => row).join('\n');
+  const row = chunk.repeat(14).trim();
+  return Array.from({ length: 28 }, () => row).join('\n');
 }
 
 function renderCalendar() {
