@@ -228,6 +228,14 @@ main {
 .hidden { display: none !important; }
 
 .board-view { padding: 12px; }
+
+.board-inline {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding: 12px 0 0;
+  position: relative;
+}
+
 .board-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .board-toolbar { margin: 10px 0; display: flex; gap: 8px; align-items: center; }
 
@@ -276,6 +284,16 @@ main {
   background-size: 24px 24px;
 }
 
+.board-placeholder {
+  margin: 12px;
+  padding: 10px 12px;
+  max-width: 440px;
+  color: var(--text-soft);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
+}
+
 .cloud {
   position: absolute;
   width: 190px;
@@ -284,6 +302,22 @@ main {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 10px;
+}
+
+.cloud-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.cloud-transfer {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-soft);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: grab;
 }
 
 .cloud.grouped { border-style: dashed; }
@@ -296,6 +330,21 @@ main {
   resize: vertical;
   background: transparent;
   color: var(--text);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.cloud textarea::-webkit-scrollbar {
+  width: 9px;
+}
+
+.cloud textarea::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.cloud textarea::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 @media (max-width: 900px) {

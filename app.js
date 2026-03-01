@@ -33,6 +33,7 @@ let previewIndex = null;
 let currentBoardTaskId = null;
 let dragTask = null;
 let dragCloud = null;
+let dragCloudNote = null;
 let selectedCloudIds = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
@@ -173,6 +174,45 @@ function moveTask(st, fromDay, toDay, taskId, targetTaskId = null, placeAfter = 
   destination.splice(insertIdx, 0, task);
 }
 
+function extractTaskTitleFromCloudText(text) {
+  const firstLine = (text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean);
+  return firstLine || 'Задача из заметки';
+}
+
+function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, placeAfter = false) {
+  const active = getActiveSpace(st);
+  const board = ensureBoard(st, boardTaskId);
+  const cloudIdx = board.clouds.findIndex((c) => c.id === cloudId);
+  if (cloudIdx < 0) return;
+
+  const [cloud] = board.clouds.splice(cloudIdx, 1);
+  const taskFromCloud = {
+    id: st.nextTaskId++,
+    title: extractTaskTitleFromCloudText(cloud.text),
+    tags: ['note'],
+    pinned: false,
+    createdAt: Date.now()
+  };
+
+  const destination = active.days[toDay];
+  if (targetTaskId === null) {
+    destination.push(taskFromCloud);
+    return;
+  }
+
+  const targetIdx = destination.findIndex((t) => t.id === targetTaskId);
+  if (targetIdx < 0) {
+    destination.push(taskFromCloud);
+    return;
+  }
+
+  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
+  destination.splice(insertIdx, 0, taskFromCloud);
+}
+
 function renderCalendar() {
   const s = effectiveState();
   const grid = document.getElementById('calendarGrid');
@@ -206,6 +246,15 @@ function renderCalendar() {
     const list = col.querySelector('.tasks');
     list.addEventListener('dragover', (e) => e.preventDefault());
     list.addEventListener('drop', () => {
+      if (dragCloudNote) {
+        const { boardTaskId, cloudId } = dragCloudNote;
+        commit(`Заметка преобразована в задачу дня «${day}»`, (st) => {
+          moveCloudToDay(st, boardTaskId, cloudId, day);
+        });
+        dragCloudNote = null;
+        return;
+      }
+
       if (!dragTask) return;
       const { fromDay, taskId } = dragTask;
       commit(`Задача перемещена в «${day}»`, (st) => moveTask(st, fromDay, day, taskId));
@@ -262,9 +311,19 @@ function renderCalendar() {
       node.addEventListener('dragover', (e) => e.preventDefault());
       node.addEventListener('drop', (e) => {
         e.preventDefault();
-        if (!dragTask) return;
         const rect = node.getBoundingClientRect();
         const placeAfter = e.clientY > rect.top + rect.height / 2;
+
+        if (dragCloudNote) {
+          const { boardTaskId, cloudId } = dragCloudNote;
+          commit('Заметка преобразована в задачу с позиционированием', (st) => {
+            moveCloudToDay(st, boardTaskId, cloudId, day, task.id, placeAfter);
+          });
+          dragCloudNote = null;
+          return;
+        }
+
+        if (!dragTask) return;
         const { fromDay, taskId } = dragTask;
         commit('Изменён порядок задач', (st) => {
           moveTask(st, fromDay, day, taskId, task.id, placeAfter);
@@ -333,34 +392,32 @@ function renderHistory() {
 function openBoard(taskId) {
   currentBoardTaskId = taskId;
   selectedCloudIds = new Set();
-  location.hash = `board/${taskId}`;
   renderBoard();
 }
 
 function renderBoard() {
-  if (!location.hash.startsWith('#board/')) {
-    document.getElementById('calendarView').classList.remove('hidden');
-    document.getElementById('boardView').classList.add('hidden');
-    return;
-  }
-
-  const taskId = Number(location.hash.split('/')[1]);
-  currentBoardTaskId = taskId;
-  const taskInfo = getTaskById(taskId, effectiveState());
-  if (!taskInfo) {
-    location.hash = '';
-    return;
-  }
-
-  document.getElementById('calendarView').classList.add('hidden');
-  document.getElementById('boardView').classList.remove('hidden');
-  document.getElementById('boardTitle').textContent = `Доска: ${taskInfo.task.title}`;
-
-  const board = ensureBoard(state, taskId);
+  const boardTitle = document.getElementById('boardTitle');
   const canvas = document.getElementById('boardCanvas');
+  const zoomValue = document.getElementById('zoomValue');
+  if (!boardTitle || !canvas || !zoomValue) return;
+
+  const taskInfo = currentBoardTaskId ? getTaskById(currentBoardTaskId, effectiveState()) : null;
+  if (!taskInfo) {
+    currentBoardTaskId = null;
+    canvas.innerHTML = '<div class="board-placeholder">Выберите задачу в календаре, чтобы открыть её доску.</div>';
+    canvas.style.transform = 'scale(1)';
+    zoomValue.textContent = '100%';
+    boardTitle.textContent = 'Поле доски';
+    return;
+  }
+
+  boardTitle.textContent = `Доска: ${taskInfo.task.title}`;
+
+  const activeTaskId = taskInfo.task.id;
+  const board = ensureBoard(state, activeTaskId);
   canvas.innerHTML = '';
   canvas.style.transform = `scale(${board.zoom})`;
-  document.getElementById('zoomValue').textContent = `${Math.round(board.zoom * 100)}%`;
+  zoomValue.textContent = `${Math.round(board.zoom * 100)}%`;
 
   board.clouds.forEach((cloud) => {
     const el = document.createElement('div');
@@ -370,14 +427,32 @@ function renderBoard() {
     el.dataset.id = cloud.id;
     el.style.left = `${cloud.x}px`;
     el.style.top = `${cloud.y}px`;
-    el.innerHTML = `<textarea>${cloud.text || ''}</textarea>`;
+    el.innerHTML = `
+      <div class="cloud-header">
+        <button class="cloud-transfer" type="button" draggable="true" title="Перетащите в календарный день">⇢ В день</button>
+      </div>
+      <textarea>${cloud.text || ''}</textarea>
+    `;
 
     el.querySelector('textarea').addEventListener('change', (e) => {
       commit('Изменён текст заметки', (st) => {
-        const b = ensureBoard(st, taskId);
+        const b = ensureBoard(st, activeTaskId);
         const c = b.clouds.find((x) => x.id === cloud.id);
         if (c) c.text = e.target.value;
       });
+    });
+
+    const transfer = el.querySelector('.cloud-transfer');
+    transfer.addEventListener('dragstart', (e) => {
+      dragCloudNote = { boardTaskId: activeTaskId, cloudId: cloud.id };
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', cloud.text || '');
+      }
+    });
+
+    transfer.addEventListener('dragend', () => {
+      dragCloudNote = null;
     });
 
     el.addEventListener('mousedown', (e) => {
@@ -392,7 +467,7 @@ function renderBoard() {
         return;
       }
 
-      if (e.target.matches('textarea')) return;
+      if (e.target.matches('textarea, .cloud-transfer')) return;
       dragCloud = { id: cloud.id, startX: e.clientX, startY: e.clientY };
     });
 
@@ -449,9 +524,7 @@ document.querySelectorAll('.space-option').forEach((btn) => {
       st.activeSpace = nextSpace;
     });
     setSpaceMenuOpen(false);
-    if (location.hash.startsWith('#board/')) {
-      location.hash = '';
-    }
+    currentBoardTaskId = null;
   });
 });
 
@@ -498,7 +571,8 @@ document.getElementById('exitPreview').addEventListener('click', () => {
 });
 
 document.getElementById('backToCalendar').addEventListener('click', () => {
-  location.hash = '';
+  currentBoardTaskId = null;
+  selectedCloudIds = new Set();
   renderBoard();
 });
 
@@ -527,7 +601,7 @@ document.getElementById('groupClouds').addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Delete') return;
   if (e.target.matches('input, textarea, [contenteditable="true"]')) return;
-  if (!location.hash.startsWith('#board/') || !currentBoardTaskId || selectedCloudIds.size === 0) return;
+  if (!currentBoardTaskId || selectedCloudIds.size === 0) return;
   const picks = [...selectedCloudIds];
   commit('Удалены выделенные заметки', (st) => {
     const b = ensureBoard(st, currentBoardTaskId);
@@ -579,7 +653,6 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-window.addEventListener('hashchange', renderBoard);
 setHistoryOpen(false);
 setInstructionsOpen(false);
 setSpaceMenuOpen(false);
