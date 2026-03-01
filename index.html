@@ -82,6 +82,13 @@
     </li>
   </template>
 
+  <div id="taskContextMenu" class="task-context-menu hidden" role="menu" aria-hidden="true">
+    <button id="ctxPin" type="button">Закрепить</button>
+    <button id="ctxBackground" type="button">Перенести на фон дня</button>
+    <label class="ctx-color-wrap">Цвет задачи <input id="ctxColor" type="color" value="#5a6cff" /></label>
+    <button id="ctxDelete" type="button">Удалить</button>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

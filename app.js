@@ -40,7 +40,8 @@ let selectedCloudIds = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
 let isSpaceMenuOpen = false;
-let isDockMenuOpen = false;
+let isTaskContextMenuOpen = false;
+let taskContextTarget = null;
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -312,6 +313,34 @@ function buildDayBackgroundPattern(title) {
   return Array.from({ length: 28 }, () => row).join('\n');
 }
 
+function setTaskContextMenuOpen(open, x = 0, y = 0) {
+  isTaskContextMenuOpen = open;
+  const menu = document.getElementById('taskContextMenu');
+  if (!menu) return;
+  if (!open) {
+    menu.classList.add('hidden');
+    menu.setAttribute('aria-hidden', 'true');
+    taskContextTarget = null;
+    return;
+  }
+
+  const maxX = window.innerWidth - menu.offsetWidth - 10;
+  const maxY = window.innerHeight - menu.offsetHeight - 10;
+  menu.style.left = `${Math.max(10, Math.min(x, maxX))}px`;
+  menu.style.top = `${Math.max(10, Math.min(y, maxY))}px`;
+  menu.classList.remove('hidden');
+  menu.setAttribute('aria-hidden', 'false');
+}
+
+function openTaskContextMenu(x, y, day, task) {
+  taskContextTarget = { day, taskId: task.id };
+  const pinBtn = document.getElementById('ctxPin');
+  const colorInput = document.getElementById('ctxColor');
+  if (pinBtn) pinBtn.textContent = task.pinned ? 'Открепить' : 'Закрепить';
+  if (colorInput) colorInput.value = task.color || '#5a6cff';
+  setTaskContextMenuOpen(true, x, y);
+}
+
 function renderCalendar() {
   const s = effectiveState();
   const grid = document.getElementById('calendarGrid');
@@ -423,47 +452,9 @@ function renderCalendar() {
         node.style.setProperty('--task-color', task.color);
       }
 
-      const colorInput = node.querySelector('.task-color');
-      colorInput.value = task.color || '#5a6cff';
-      colorInput.addEventListener('input', (e) => {
-        const nextColor = e.target.value;
-        node.style.setProperty('--task-color', nextColor);
-      });
-      colorInput.addEventListener('change', (e) => {
-        const nextColor = e.target.value;
-        commit(`Изменён цвет задачи «${task.title}»`, (st) => {
-          const t = getActiveSpace(st).days[day].find((x) => x.id === task.id);
-          if (!t) return;
-          t.color = nextColor;
-        });
-      });
-
-      const toBackground = node.querySelector('.to-background');
-      toBackground.addEventListener('dragstart', (e) => {
-        dragBackgroundTask = { fromDay: day, taskId: task.id, title: task.title };
-        if (e.dataTransfer) {
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', task.title);
-        }
-      });
-      toBackground.addEventListener('dragend', () => {
-        dragBackgroundTask = null;
-      });
-
-      node.querySelector('.delete').addEventListener('click', () => {
-        commit(`Удалена задача «${task.title}»`, (st) => {
-          const active = getActiveSpace(st);
-          active.days[day] = active.days[day].filter((t) => t.id !== task.id);
-          delete active.boards[task.id];
-        });
-      });
-
       node.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        commit('Изменён статус закрепления', (st) => {
-          const t = getActiveSpace(st).days[day].find((x) => x.id === task.id);
-          if (t) t.pinned = !t.pinned;
-        });
+        openTaskContextMenu(e.clientX, e.clientY, day, task);
       });
 
       node.addEventListener('dragstart', (e) => {
@@ -759,7 +750,7 @@ document.querySelectorAll('.space-option').forEach((btn) => {
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
-  if (!e.target.closest('.task-dock-menu-wrap')) setDockMenuOpen(false);
+  if (isTaskContextMenuOpen && !e.target.closest('#taskContextMenu') && !e.target.closest('.task')) setTaskContextMenuOpen(false);
 });
 
 document.getElementById('themeToggle').addEventListener('click', () => {
@@ -783,7 +774,7 @@ document.addEventListener('keydown', (e) => {
     if (isHistoryOpen) setHistoryOpen(false);
     if (isInstructionsOpen) setInstructionsOpen(false);
     if (isSpaceMenuOpen) setSpaceMenuOpen(false);
-    if (isDockMenuOpen) setDockMenuOpen(false);
+    if (isTaskContextMenuOpen) setTaskContextMenuOpen(false);
   }
 });
 
@@ -852,6 +843,68 @@ document.getElementById('backToCalendar').addEventListener('click', () => {
   selectedCloudIds = new Set();
   renderBoard();
 });
+
+const ctxPin = document.getElementById('ctxPin');
+const ctxBackground = document.getElementById('ctxBackground');
+const ctxDelete = document.getElementById('ctxDelete');
+const ctxColor = document.getElementById('ctxColor');
+
+if (ctxPin) {
+  ctxPin.addEventListener('click', () => {
+    if (!taskContextTarget) return;
+    const { day, taskId } = taskContextTarget;
+    commit('Изменён статус закрепления', (st) => {
+      const t = getActiveSpace(st).days[day].find((x) => x.id === taskId);
+      if (t) t.pinned = !t.pinned;
+    });
+    setTaskContextMenuOpen(false);
+  });
+}
+
+if (ctxBackground) {
+  ctxBackground.addEventListener('click', () => {
+    if (!taskContextTarget) return;
+    const { day, taskId } = taskContextTarget;
+    commit(`Задача перенесена на фон дня «${day}»`, (st) => {
+      const active = getActiveSpace(st);
+      const source = active.days[day];
+      const idx = source.findIndex((t) => t.id === taskId);
+      if (idx < 0) return;
+      const [task] = source.splice(idx, 1);
+      active.dayBackgrounds[day] = task.title;
+      delete active.boards[task.id];
+      if (currentBoardTaskId === task.id) currentBoardTaskId = null;
+    });
+    setTaskContextMenuOpen(false);
+  });
+}
+
+if (ctxDelete) {
+  ctxDelete.addEventListener('click', () => {
+    if (!taskContextTarget) return;
+    const { day, taskId } = taskContextTarget;
+    commit('Удалена задача через меню', (st) => {
+      const active = getActiveSpace(st);
+      active.days[day] = active.days[day].filter((t) => t.id !== taskId);
+      delete active.boards[taskId];
+      if (currentBoardTaskId === taskId) currentBoardTaskId = null;
+    });
+    setTaskContextMenuOpen(false);
+  });
+}
+
+if (ctxColor) {
+  ctxColor.addEventListener('change', (e) => {
+    if (!taskContextTarget) return;
+    const { day, taskId } = taskContextTarget;
+    const nextColor = e.target.value;
+    commit('Изменён цвет задачи через меню', (st) => {
+      const t = getActiveSpace(st).days[day].find((x) => x.id === taskId);
+      if (!t) return;
+      t.color = nextColor;
+    });
+  });
+}
 
 document.getElementById('addCloud').addEventListener('click', () => {
   const taskId = currentBoardTaskId;
