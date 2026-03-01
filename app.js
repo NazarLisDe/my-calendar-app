@@ -231,6 +231,7 @@ function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, pl
   const taskFromCloud = {
     id: st.nextTaskId++,
     title: extractTaskTitleFromCloudText(cloud.text),
+    color: null,
     pinned: false,
     createdAt: Date.now()
   };
@@ -384,7 +385,7 @@ function renderCalendar() {
       const title = input.value.trim();
       if (!title) return;
       commit(`Добавлена задача «${title}»`, (st) => {
-        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, pinned: false, createdAt: Date.now() });
+        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, color: null, pinned: false, createdAt: Date.now() });
       });
     });
 
@@ -417,6 +418,25 @@ function renderCalendar() {
       node.querySelector('.open-board').textContent = task.title;
       node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
       enableInlineTaskTitleEdit(node, task, day);
+
+      if (task.color) {
+        node.style.setProperty('--task-color', task.color);
+      }
+
+      const colorInput = node.querySelector('.task-color');
+      colorInput.value = task.color || '#5a6cff';
+      colorInput.addEventListener('input', (e) => {
+        const nextColor = e.target.value;
+        node.style.setProperty('--task-color', nextColor);
+      });
+      colorInput.addEventListener('change', (e) => {
+        const nextColor = e.target.value;
+        commit(`Изменён цвет задачи «${task.title}»`, (st) => {
+          const t = getActiveSpace(st).days[day].find((x) => x.id === task.id);
+          if (!t) return;
+          t.color = nextColor;
+        });
+      });
 
       const toBackground = node.querySelector('.to-background');
       toBackground.addEventListener('dragstart', (e) => {
