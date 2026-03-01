@@ -118,10 +118,44 @@ main {
   border-radius: 14px;
   padding: 10px;
   min-height: 480px;
+  position: relative;
+  overflow: hidden;
 }
 
-.day-header { margin: 0 0 8px; font-size: 15px; color: var(--text-soft); }
+.day-header { margin: 0 0 8px; font-size: 15px; color: var(--text-soft); position: relative; z-index: 2; }
 .add-task { display: flex; gap: 6px; margin-bottom: 10px; min-width: 0; }
+
+.clear-day-bg {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  z-index: 3;
+}
+
+.day-background-label {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: pre;
+  letter-spacing: 0.3px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-soft) 18%, transparent);
+  pointer-events: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+.day-column .add-task,
+.day-column .tasks {
+  position: relative;
+  z-index: 2;
+}
+
 
 .add-task input {
   flex: 1;
@@ -148,10 +182,8 @@ main {
   border-radius: 10px;
   padding: 8px;
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  grid-template-areas:
-    'pin title edit delete'
-    '. tags tags tags';
+  grid-template-columns: auto 1fr auto auto auto;
+  grid-template-areas: 'pin title bg edit delete';
   align-items: center;
   gap: 6px;
   cursor: grab;
@@ -160,13 +192,14 @@ main {
 .task .pin { grid-area: pin; visibility: hidden; }
 .task.pinned .pin { visibility: visible; }
 .task .open-board { grid-area: title; }
-.task .task-tags { grid-area: tags; display: flex; flex-wrap: wrap; gap: 4px; }
+.task .to-background { grid-area: bg; }
 .task .edit { grid-area: edit; }
 .task .delete { grid-area: delete; }
 
 .task .open-board,
 .task .delete,
-.task .edit {
+.task .edit,
+.task .to-background {
   border: 0;
   background: transparent;
   padding: 0;
@@ -179,14 +212,16 @@ main {
   overflow-wrap: anywhere;
 }
 
-.tag {
-  background: var(--surface);
+.task-title-input {
+  grid-area: title;
+  width: 100%;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 11px;
-  color: var(--text-soft);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 4px 8px;
 }
+
 
 .history-panel {
   position: fixed;
@@ -228,6 +263,14 @@ main {
 .hidden { display: none !important; }
 
 .board-view { padding: 12px; }
+
+.board-inline {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding: 12px 0 0;
+  position: relative;
+}
+
 .board-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .board-toolbar { margin: 10px 0; display: flex; gap: 8px; align-items: center; }
 
@@ -276,6 +319,16 @@ main {
   background-size: 24px 24px;
 }
 
+.board-placeholder {
+  margin: 12px;
+  padding: 10px 12px;
+  max-width: 440px;
+  color: var(--text-soft);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-soft) 80%, var(--surface));
+}
+
 .cloud {
   position: absolute;
   width: 190px;
@@ -284,6 +337,22 @@ main {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 10px;
+}
+
+.cloud-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.cloud-transfer {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-soft);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: grab;
 }
 
 .cloud.grouped { border-style: dashed; }
@@ -296,10 +365,29 @@ main {
   resize: vertical;
   background: transparent;
   color: var(--text);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.cloud textarea::-webkit-scrollbar {
+  width: 9px;
+}
+
+.cloud textarea::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.cloud textarea::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 @media (max-width: 900px) {
   .topbar { flex-direction: column; align-items: stretch; gap: 10px; }
   .topbar-title-wrap,
   .topbar-actions { justify-content: space-between; }
+}
+
+.task .to-background {
+  color: var(--text-soft);
 }
