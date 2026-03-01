@@ -304,6 +304,22 @@ main {
   padding: 10px;
 }
 
+.cloud-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.cloud-transfer {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-soft);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: grab;
+}
+
 .cloud.grouped { border-style: dashed; }
 .cloud.selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 26%, transparent); }
 
@@ -314,6 +330,21 @@ main {
   resize: vertical;
   background: transparent;
   color: var(--text);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.cloud textarea::-webkit-scrollbar {
+  width: 9px;
+}
+
+.cloud textarea::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.cloud textarea::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 

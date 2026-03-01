@@ -34,6 +34,7 @@ let previewIndex = null;
 let currentBoardTaskId = null;
 let dragTask = null;
 let dragCloud = null;
+let dragCloudNote = null;
 let selectedCloudIds = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
@@ -211,6 +212,45 @@ function moveTask(st, fromDay, toDay, taskId, targetTaskId = null, placeAfter = 
   destination.splice(insertIdx, 0, task);
 }
 
+function extractTaskTitleFromCloudText(text) {
+  const firstLine = (text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean);
+  return firstLine || 'Задача из заметки';
+}
+
+function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, placeAfter = false) {
+  const active = getActiveSpace(st);
+  const board = ensureBoard(st, boardTaskId);
+  const cloudIdx = board.clouds.findIndex((c) => c.id === cloudId);
+  if (cloudIdx < 0) return;
+
+  const [cloud] = board.clouds.splice(cloudIdx, 1);
+  const taskFromCloud = {
+    id: st.nextTaskId++,
+    title: extractTaskTitleFromCloudText(cloud.text),
+    tags: ['note'],
+    pinned: false,
+    createdAt: Date.now()
+  };
+
+  const destination = active.days[toDay];
+  if (targetTaskId === null) {
+    destination.push(taskFromCloud);
+    return;
+  }
+
+  const targetIdx = destination.findIndex((t) => t.id === targetTaskId);
+  if (targetIdx < 0) {
+    destination.push(taskFromCloud);
+    return;
+  }
+
+  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
+  destination.splice(insertIdx, 0, taskFromCloud);
+}
+
 function renderCalendar() {
   const s = effectiveState();
   const grid = document.getElementById('calendarGrid');
@@ -244,6 +284,15 @@ function renderCalendar() {
     const list = col.querySelector('.tasks');
     list.addEventListener('dragover', (e) => e.preventDefault());
     list.addEventListener('drop', () => {
+      if (dragCloudNote) {
+        const { boardTaskId, cloudId } = dragCloudNote;
+        commit(`Заметка преобразована в задачу дня «${day}»`, (st) => {
+          moveCloudToDay(st, boardTaskId, cloudId, day);
+        });
+        dragCloudNote = null;
+        return;
+      }
+
       if (!dragTask) return;
       if (dragTask.fromDock) {
         commit(`Задача перемещена из поля доски в «${day}»`, (st) => {
@@ -310,9 +359,19 @@ function renderCalendar() {
       node.addEventListener('dragover', (e) => e.preventDefault());
       node.addEventListener('drop', (e) => {
         e.preventDefault();
-        if (!dragTask) return;
         const rect = node.getBoundingClientRect();
         const placeAfter = e.clientY > rect.top + rect.height / 2;
+
+        if (dragCloudNote) {
+          const { boardTaskId, cloudId } = dragCloudNote;
+          commit('Заметка преобразована в задачу с позиционированием', (st) => {
+            moveCloudToDay(st, boardTaskId, cloudId, day, task.id, placeAfter);
+          });
+          dragCloudNote = null;
+          return;
+        }
+
+        if (!dragTask) return;
         const { fromDay, taskId } = dragTask;
         commit('Изменён порядок задач', (st) => {
           moveTask(st, fromDay, day, taskId, task.id, placeAfter);
@@ -497,7 +556,12 @@ function renderBoard() {
     el.dataset.id = cloud.id;
     el.style.left = `${cloud.x}px`;
     el.style.top = `${cloud.y}px`;
-    el.innerHTML = `<textarea>${cloud.text || ''}</textarea>`;
+    el.innerHTML = `
+      <div class="cloud-header">
+        <button class="cloud-transfer" type="button" draggable="true" title="Перетащите в календарный день">⇢ В день</button>
+      </div>
+      <textarea>${cloud.text || ''}</textarea>
+    `;
 
     el.querySelector('textarea').addEventListener('change', (e) => {
       commit('Изменён текст заметки', (st) => {
@@ -505,6 +569,19 @@ function renderBoard() {
         const c = b.clouds.find((x) => x.id === cloud.id);
         if (c) c.text = e.target.value;
       });
+    });
+
+    const transfer = el.querySelector('.cloud-transfer');
+    transfer.addEventListener('dragstart', (e) => {
+      dragCloudNote = { boardTaskId: activeTaskId, cloudId: cloud.id };
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', cloud.text || '');
+      }
+    });
+
+    transfer.addEventListener('dragend', () => {
+      dragCloudNote = null;
     });
 
     el.addEventListener('mousedown', (e) => {
@@ -519,7 +596,7 @@ function renderBoard() {
         return;
       }
 
-      if (e.target.matches('textarea')) return;
+      if (e.target.matches('textarea, .cloud-transfer')) return;
       dragCloud = { id: cloud.id, startX: e.clientX, startY: e.clientY };
     });
 
