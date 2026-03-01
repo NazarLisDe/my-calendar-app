@@ -137,16 +137,19 @@ main {
 .day-background-label {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 28px 10px 10px;
-  text-align: center;
-  font-size: 26px;
-  font-weight: 700;
-  color: color-mix(in srgb, var(--text-soft) 26%, transparent);
+  padding: 22px 8px 8px;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-soft) 18%, transparent);
   pointer-events: none;
   user-select: none;
+  overflow: hidden;
+  transform: rotate(-10deg) scale(1.15);
+  transform-origin: center;
 }
 
 .day-column .add-task,
@@ -407,6 +410,10 @@ main {
 
 .dock-tasks .task:last-child {
   margin-bottom: 0;
+}
+
+.task .to-background {
+  color: var(--text-soft);
 }
 
 .task .to-background {

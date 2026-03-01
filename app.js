@@ -302,6 +302,15 @@ function enableInlineTaskTitleEdit(node, task, day) {
   input.addEventListener('blur', () => finishEdit(true));
 }
 
+
+function buildDayBackgroundPattern(title) {
+  const clean = (title || '').trim();
+  if (!clean) return '';
+  const chunk = `${clean}   ✦   `;
+  const row = chunk.repeat(5).trim();
+  return Array.from({ length: 7 }, () => row).join('\n');
+}
+
 function renderCalendar() {
   const s = effectiveState();
   const grid = document.getElementById('calendarGrid');
@@ -316,13 +325,18 @@ function renderCalendar() {
     col.innerHTML = `
       <h3 class="day-header">${day}</h3>
       <button class="clear-day-bg ${dayBackgroundTitle ? '' : 'hidden'}" type="button" title="Убрать фон дня">✕ фон</button>
-      <div class="day-background-label ${dayBackgroundTitle ? '' : 'hidden'}">${dayBackgroundTitle || ''}</div>
+      <div class="day-background-label ${dayBackgroundTitle ? '' : 'hidden'}"></div>
       <form class="add-task">
         <input name="title" placeholder="Новая задача" required />
         <button type="submit">+</button>
       </form>
       <ul class="tasks"></ul>
     `;
+
+    const bgLabel = col.querySelector('.day-background-label');
+    if (bgLabel && dayBackgroundTitle) {
+      bgLabel.textContent = buildDayBackgroundPattern(dayBackgroundTitle);
+    }
 
     const handleDayDrop = (targetTaskId = null, placeAfter = false) => {
       if (dragBackgroundTask) {
