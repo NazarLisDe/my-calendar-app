@@ -385,6 +385,28 @@ main {
   .topbar { flex-direction: column; align-items: stretch; gap: 10px; }
   .topbar-title-wrap,
   .topbar-actions { justify-content: space-between; }
+
+  .task-dock-toolbar {
+    align-items: stretch;
+  }
+
+  .task-dock-menu {
+    right: auto;
+    left: 0;
+  }
+}
+
+.dock-tasks {
+  list-style: none;
+  margin: 0;
+}
+
+.dock-tasks .task {
+  margin-bottom: 8px;
+}
+
+.dock-tasks .task:last-child {
+  margin-bottom: 0;
 }
 
 .task .to-background {
