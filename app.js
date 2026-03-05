@@ -1410,6 +1410,8 @@ if (ctxColor) {
         if (t) t.color = nextColor;
       });
     });
+    clearTaskSelection();
+    setTaskContextMenuOpen(false);
   });
 }
 
