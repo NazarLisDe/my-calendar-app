@@ -27,6 +27,7 @@ const defaultState = () => ({
   nextGroupId: 1,
   nextTaskGroupId: 1,
   nextSideNoteId: 1,
+  sideNotes: [],
   spaceNames: { ...SPACES },
   spaces: {
     management: createSpaceState(),
@@ -51,6 +52,7 @@ let isInstructionsOpen = false;
 let isSpaceMenuOpen = false;
 let isSpaceActionMenuOpen = false;
 let spaceActionTargetKey = null;
+let selectedSpaceKeys = new Set();
 let isTaskContextMenuOpen = false;
 let isDockMenuOpen = false;
 let isNotesPanelOpen = false;
@@ -71,9 +73,14 @@ function loadState() {
       if (!mergedSpaces.management) mergedSpaces.management = createSpaceState();
       if (!mergedSpaces.notes) mergedSpaces.notes = createSpaceState();
 
+      const mergedSideNotes = Array.isArray(parsed.sideNotes)
+        ? parsed.sideNotes
+        : Object.values(mergedSpaces).flatMap((space) => Array.isArray(space.sideNotes) ? space.sideNotes : []);
+
       return {
         ...base,
         ...parsed,
+        sideNotes: mergedSideNotes,
         spaceNames: { ...base.spaceNames, ...(parsed.spaceNames || {}) },
         spaces: mergedSpaces
       };
@@ -82,6 +89,7 @@ function loadState() {
     return {
       ...base,
       ...parsed,
+      sideNotes: Array.isArray(parsed.sideNotes) ? parsed.sideNotes : [],
       spaces: {
         management: {
           days: parsed.days || createSpaceState().days,
@@ -107,6 +115,11 @@ function persist() {
 function getActiveSpace(st = effectiveState()) {
   const key = st.activeSpace in st.spaces ? st.activeSpace : 'management';
   return st.spaces[key] || st.spaces.management;
+}
+
+function getGlobalSideNotes(st = effectiveState()) {
+  if (!Array.isArray(st.sideNotes)) st.sideNotes = [];
+  return st.sideNotes;
 }
 
 function getSpaceLabel(key, st = effectiveState()) {
@@ -148,6 +161,17 @@ function getTaskContextSelection() {
 
 function clearTaskSelection() {
   selectedTaskKeys = new Set();
+}
+
+function clearSpaceSelection() {
+  selectedSpaceKeys = new Set();
+}
+
+function getSpaceActionSelection() {
+  if (selectedSpaceKeys.size > 0) {
+    return [...selectedSpaceKeys].filter((key) => key in state.spaces);
+  }
+  return spaceActionTargetKey && (spaceActionTargetKey in state.spaces) ? [spaceActionTargetKey] : [];
 }
 
 function ensureBoard(st, taskId) {
@@ -242,6 +266,7 @@ function renderSpaceOptions(st = effectiveState()) {
     btn.dataset.space = key;
     btn.setAttribute('role', 'menuitem');
     btn.textContent = label;
+    if (selectedSpaceKeys.has(key)) btn.classList.add('selected');
     list.append(btn);
   });
 }
@@ -311,10 +336,11 @@ function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, pl
 
 function moveSideNoteToDay(st, noteId, toDay, targetTaskId = null, placeAfter = false) {
   const active = getActiveSpace(st);
-  const noteIdx = active.sideNotes.findIndex((n) => n.id === noteId);
+  const sideNotes = getGlobalSideNotes(st);
+  const noteIdx = sideNotes.findIndex((n) => n.id === noteId);
   if (noteIdx < 0) return;
 
-  const [note] = active.sideNotes.splice(noteIdx, 1);
+  const [note] = sideNotes.splice(noteIdx, 1);
   const task = {
     id: st.nextTaskId++,
     title: extractTaskTitleFromCloudText(note.text),
@@ -464,8 +490,7 @@ function normalizeImportedSpaceData(raw) {
     dayNotes: { ...base.dayNotes, ...(raw.dayNotes || {}) },
     boards: { ...base.boards, ...(raw.boards || {}) },
     dockTasks: Array.isArray(raw.dockTasks) ? raw.dockTasks : [],
-    taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : [],
-    sideNotes: Array.isArray(raw.sideNotes) ? raw.sideNotes : []
+    taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : []
   };
 }
 
@@ -487,7 +512,10 @@ function buildTaskNode(task, day, handleDayDrop) {
   if (task.pinned) node.classList.add('pinned');
   if (selectedTaskKeys.has(getTaskSelectionKey(day, task.id))) node.classList.add('selected');
   node.querySelector('.open-board').textContent = task.title;
-  node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
+  node.querySelector('.open-board').addEventListener('click', (e) => {
+    if (e.ctrlKey) return;
+    openBoard(task.id);
+  });
   enableInlineTaskTitleEdit(node, task, day);
 
   if (task.color) {
@@ -497,7 +525,7 @@ function buildTaskNode(task, day, handleDayDrop) {
   node.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     if (!e.ctrlKey) return;
-    if (e.target.closest('button, input, textarea')) return;
+    if (e.target.closest('input, textarea')) return;
     e.preventDefault();
     const key = getTaskSelectionKey(day, task.id);
     if (selectedTaskKeys.has(key)) {
@@ -971,10 +999,10 @@ document.addEventListener('mouseup', () => {
 function renderSideNotes(st = effectiveState()) {
   const list = document.getElementById('sideNotesList');
   if (!list) return;
-  const space = getActiveSpace(st);
+  const sideNotes = getGlobalSideNotes(st);
   list.innerHTML = '';
 
-  if (!Array.isArray(space.sideNotes) || space.sideNotes.length === 0) {
+  if (sideNotes.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'side-note-empty';
     empty.textContent = 'Пока нет заметок. Добавьте заметку и перетащите её в день.';
@@ -982,7 +1010,7 @@ function renderSideNotes(st = effectiveState()) {
     return;
   }
 
-  space.sideNotes.forEach((note) => {
+  sideNotes.forEach((note) => {
     const li = document.createElement('li');
     li.className = 'side-note-item';
     li.innerHTML = `
@@ -996,7 +1024,7 @@ function renderSideNotes(st = effectiveState()) {
     const area = li.querySelector('textarea');
     area.addEventListener('change', (e) => {
       commit('Изменён текст заметки бокового меню', (stateDraft) => {
-        const target = getActiveSpace(stateDraft).sideNotes.find((x) => x.id === note.id);
+        const target = getGlobalSideNotes(stateDraft).find((x) => x.id === note.id);
         if (target) target.text = e.target.value;
       });
     });
@@ -1015,8 +1043,7 @@ function renderSideNotes(st = effectiveState()) {
 
     li.querySelector('.side-note-delete').addEventListener('click', () => {
       commit('Удалена заметка бокового меню', (stateDraft) => {
-        const active = getActiveSpace(stateDraft);
-        active.sideNotes = active.sideNotes.filter((x) => x.id !== note.id);
+        stateDraft.sideNotes = getGlobalSideNotes(stateDraft).filter((x) => x.id !== note.id);
       });
     });
 
@@ -1055,7 +1082,9 @@ function switchSpace(nextSpace) {
     st.activeSpace = nextSpace;
   });
   setSpaceMenuOpen(false);
+  clearSpaceSelection();
   setSpaceActionMenuOpen(false);
+  clearTaskSelection();
   currentBoardTaskId = null;
 }
 
@@ -1083,7 +1112,18 @@ if (spaceMenuElement) {
   spaceMenuElement.addEventListener('click', (e) => {
     const btn = e.target.closest('.space-option');
     if (!btn) return;
-    switchSpace(btn.dataset.space);
+    const key = btn.dataset.space;
+    if (!(key in state.spaces)) return;
+
+    if (e.ctrlKey) {
+      if (selectedSpaceKeys.has(key)) selectedSpaceKeys.delete(key);
+      else selectedSpaceKeys.add(key);
+      renderSpaceOptions();
+      return;
+    }
+
+    selectedSpaceKeys = new Set([key]);
+    switchSpace(key);
   });
 
   spaceMenuElement.addEventListener('contextmenu', (e) => {
@@ -1092,13 +1132,21 @@ if (spaceMenuElement) {
     e.preventDefault();
     const key = btn.dataset.space;
     if (!(key in state.spaces)) return;
+    if (!selectedSpaceKeys.has(key)) selectedSpaceKeys = new Set([key]);
     spaceActionTargetKey = key;
+    renderSpaceOptions();
     setSpaceActionMenuOpen(true, e.clientX, e.clientY);
   });
 }
 
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
+  if (!e.target.closest('.space-menu-wrap')) {
+    setSpaceMenuOpen(false);
+    if (selectedSpaceKeys.size > 0) {
+      clearSpaceSelection();
+      renderSpaceOptions();
+    }
+  }
   if (isNotesPanelOpen && !e.target.closest('#notesPanel') && !e.target.closest('#toggleNotesPanel')) setNotesPanelOpen(false);
   if (isSpaceActionMenuOpen && !e.target.closest('#spaceActionMenu') && !e.target.closest('.space-option')) setSpaceActionMenuOpen(false);
   if (isTaskContextMenuOpen && !e.target.closest('#taskContextMenu') && !e.target.closest('.task')) setTaskContextMenuOpen(false);
@@ -1135,6 +1183,7 @@ document.addEventListener('keydown', (e) => {
     if (isInstructionsOpen) setInstructionsOpen(false);
     if (isSpaceMenuOpen) setSpaceMenuOpen(false);
     if (isSpaceActionMenuOpen) setSpaceActionMenuOpen(false);
+    if (selectedSpaceKeys.size > 0) { clearSpaceSelection(); renderSpaceOptions(); }
     if (isTaskContextMenuOpen) setTaskContextMenuOpen(false);
     if (isNotesPanelOpen) setNotesPanelOpen(false);
   }
@@ -1207,8 +1256,7 @@ if (addSideNoteForm) {
     const text = addSideNoteForm.text.value.trim();
     if (!text) return;
     commit('Добавлена заметка в боковое меню', (st) => {
-      const active = getActiveSpace(st);
-      active.sideNotes.push({ id: st.nextSideNoteId++, text, createdAt: Date.now() });
+      getGlobalSideNotes(st).push({ id: st.nextSideNoteId++, text, createdAt: Date.now() });
     });
     addSideNoteForm.reset();
   });
@@ -1269,23 +1317,25 @@ if (spaceActionExport) {
 
 if (spaceActionDelete) {
   spaceActionDelete.addEventListener('click', () => {
-    if (!spaceActionTargetKey) return;
-    const target = spaceActionTargetKey;
-    if (!(target in state.spaces)) {
+    const targets = getSpaceActionSelection();
+    if (targets.length === 0) {
       setSpaceActionMenuOpen(false);
       return;
     }
 
-    const isCore = target === 'management' || target === 'notes';
-    commit(isCore ? `Очищено пространство «${getSpaceLabel(target, state)}»` : `Удалено пространство «${getSpaceLabel(target, state)}»`, (st) => {
+    commit(targets.length > 1 ? `Удалено/очищено пространств: ${targets.length}` : (targets[0] === 'management' || targets[0] === 'notes') ? `Очищено пространство «${getSpaceLabel(targets[0], state)}»` : `Удалено пространство «${getSpaceLabel(targets[0], state)}»`, (st) => {
       if (!st.spaceNames) st.spaceNames = { ...SPACES };
 
-      if (isCore) {
-        st.spaces[target] = createSpaceState();
-      } else {
-        delete st.spaces[target];
-        delete st.spaceNames[target];
-      }
+      targets.forEach((target) => {
+        if (!(target in st.spaces)) return;
+        const isCore = target === 'management' || target === 'notes';
+        if (isCore) {
+          st.spaces[target] = createSpaceState();
+        } else {
+          delete st.spaces[target];
+          delete st.spaceNames[target];
+        }
+      });
 
       if (Object.keys(st.spaces).length === 0) {
         st.spaces.management = createSpaceState();
@@ -1297,6 +1347,7 @@ if (spaceActionDelete) {
 
       currentBoardTaskId = null;
     });
+    clearSpaceSelection();
     setSpaceActionMenuOpen(false);
   });
 }
@@ -1432,6 +1483,23 @@ if (ctxCreateGroup) {
   });
 }
 
+
+if (ctxCreateGroup) {
+  ctxCreateGroup.addEventListener('click', () => {
+    const picks = getTaskContextSelection();
+    if (picks.length < 2) return;
+    commit('Создана группа задач календаря', (st) => {
+      const active = getActiveSpace(st);
+      if (!Array.isArray(active.taskGroups)) active.taskGroups = [];
+      const groupId = st.nextTaskGroupId++;
+      const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
+      active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, color: '#8ea1ff', taskIds });
+    });
+    clearTaskSelection();
+    setTaskContextMenuOpen(false);
+  });
+}
+
 document.getElementById('addCloud').addEventListener('click', () => {
   const taskId = currentBoardTaskId;
   if (!taskId) return;
@@ -1464,6 +1532,26 @@ document.addEventListener('keydown', (e) => {
     b.clouds = b.clouds.filter((c) => !picks.includes(c.id));
   });
   selectedCloudIds = new Set();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Delete') return;
+  if (e.target.matches('input, textarea, [contenteditable="true"]')) return;
+  if (selectedTaskKeys.size === 0) return;
+  const picks = getSelectedTaskRefs();
+  commit('Удалены выделенные задачи', (st) => {
+    const active = getActiveSpace(st);
+    picks.forEach(({ day, taskId }) => {
+      active.days[day] = active.days[day].filter((t) => t.id !== taskId);
+      delete active.boards[taskId];
+      if (currentBoardTaskId === taskId) currentBoardTaskId = null;
+    });
+    active.taskGroups = (active.taskGroups || []).map((group) => ({
+      ...group,
+      taskIds: (group.taskIds || []).filter((id) => !picks.some((pick) => pick.taskId === id))
+    })).filter((group) => group.taskIds.length > 1);
+  });
+  clearTaskSelection();
 });
 
 document.getElementById('ungroupClouds').addEventListener('click', () => {

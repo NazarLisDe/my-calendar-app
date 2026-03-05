@@ -90,6 +90,12 @@ button:hover { border-color: var(--accent); }
   border: 0;
 }
 
+.space-option.selected {
+  background: var(--accent-soft);
+  border-radius: 8px;
+  color: var(--text);
+}
+
 .space-list {
   display: flex;
   flex-direction: column;
