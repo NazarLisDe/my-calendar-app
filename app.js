@@ -12,6 +12,7 @@ function createSpaceState() {
     days: Object.fromEntries(DAYS.map((d) => [d, []])),
     dayBackgrounds: Object.fromEntries(DAYS.map((d) => [d, null])),
     boards: {},
+    dockTasks: [],
     taskGroups: []
   };
 }
@@ -47,6 +48,7 @@ let isSpaceMenuOpen = false;
 let isSpaceActionMenuOpen = false;
 let spaceActionTargetKey = null;
 let isTaskContextMenuOpen = false;
+let isDockMenuOpen = false;
 let taskContextTarget = null;
 
 function loadState() {
@@ -185,6 +187,14 @@ function setInstructionsOpen(open) {
   panel.setAttribute('aria-hidden', String(!open));
   toggle.setAttribute('aria-expanded', String(open));
   toggle.textContent = open ? 'Скрыть инструкцию' : 'Инструкция';
+}
+
+function setDockMenuOpen(open) {
+  isDockMenuOpen = open;
+  const dock = document.getElementById('taskDock');
+  const toggle = document.getElementById('toggleDockMenu');
+  if (dock) dock.classList.toggle('hidden', !open);
+  if (toggle) toggle.setAttribute('aria-expanded', String(open));
 }
 
 function setSpaceMenuOpen(open) {
@@ -372,7 +382,7 @@ function openTaskContextMenu(x, y, day, task) {
   const groupBtn = document.getElementById('ctxCreateGroup');
   if (pinBtn) pinBtn.textContent = task.pinned ? 'Открепить' : 'Закрепить';
   if (colorInput) colorInput.value = task.color || '#5a6cff';
-  if (groupBtn) groupBtn.classList.toggle('hidden', selection.length <= 2);
+  if (groupBtn) groupBtn.classList.toggle('hidden', selection.length < 2);
   setTaskContextMenuOpen(true, x, y);
   renderCalendar();
 }
@@ -403,6 +413,7 @@ function normalizeImportedSpaceData(raw) {
     days: { ...base.days, ...(raw.days || {}) },
     dayBackgrounds: { ...base.dayBackgrounds, ...(raw.dayBackgrounds || {}) },
     boards: { ...base.boards, ...(raw.boards || {}) },
+    dockTasks: Array.isArray(raw.dockTasks) ? raw.dockTasks : [],
     taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : []
   };
 }
@@ -582,9 +593,44 @@ function renderCalendar() {
       if (groupTasks.length === 0) return;
       const groupEl = document.createElement('section');
       groupEl.className = 'task-group-column';
-      groupEl.innerHTML = `<h4>${group.name || 'Группа'}</h4><ul class="tasks"></ul>`;
+      const groupColor = group.color || '#8ea1ff';
+      groupEl.style.setProperty('--group-color', groupColor);
+      groupEl.innerHTML = `
+        <div class="task-group-header">
+          <h4>${group.name || 'Группа'}</h4>
+          <div class="task-group-controls">
+            <input class="group-color-input" type="color" value="${groupColor}" title="Цвет группы" />
+            <button class="group-rename" type="button">Название</button>
+          </div>
+        </div>
+        <ul class="tasks"></ul>
+      `;
       const groupList = groupEl.querySelector('.tasks');
       groupTasks.forEach((task) => groupList.append(buildTaskNode(task, day, handleDayDrop)));
+
+      const colorInput = groupEl.querySelector('.group-color-input');
+      colorInput.addEventListener('change', (e) => {
+        const nextColor = e.target.value;
+        commit('Изменён цвет группы задач', (st) => {
+          const active = getActiveSpace(st);
+          const targetGroup = (active.taskGroups || []).find((item) => item.id === group.id);
+          if (targetGroup) targetGroup.color = nextColor;
+        });
+      });
+
+      const renameBtn = groupEl.querySelector('.group-rename');
+      renameBtn.addEventListener('click', () => {
+        const nextName = prompt('Название группы', group.name || '');
+        if (nextName === null) return;
+        const cleanName = nextName.trim();
+        if (!cleanName) return;
+        commit('Изменено название группы задач', (st) => {
+          const active = getActiveSpace(st);
+          const targetGroup = (active.taskGroups || []).find((item) => item.id === group.id);
+          if (targetGroup) targetGroup.name = cleanName;
+        });
+      });
+
       groupsWrap.append(groupEl);
     });
 
@@ -1198,6 +1244,23 @@ if (ctxColor) {
         if (t) t.color = nextColor;
       });
     });
+  });
+}
+
+
+if (ctxCreateGroup) {
+  ctxCreateGroup.addEventListener('click', () => {
+    const picks = getTaskContextSelection();
+    if (picks.length < 2) return;
+    commit('Создана группа задач календаря', (st) => {
+      const active = getActiveSpace(st);
+      if (!Array.isArray(active.taskGroups)) active.taskGroups = [];
+      const groupId = st.nextTaskGroupId++;
+      const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
+      active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, color: '#8ea1ff', taskIds });
+    });
+    clearTaskSelection();
+    setTaskContextMenuOpen(false);
   });
 }
 
