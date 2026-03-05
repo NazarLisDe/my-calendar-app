@@ -1,15 +1,15 @@
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mexvcooxruzxrntvhzmc.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_tdIF-2iq8Dx-V5VJx_ATpg_LoeNqQAx';
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '8662569579:AAGMbNe6xkNdzpthh6FYgc2gesPiurB47LY';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-if (!TELEGRAM_TOKEN) {
-  throw new Error('TELEGRAM_TOKEN is required');
+if (!TELEGRAM_BOT_TOKEN) {
+  throw new Error('TELEGRAM_BOT_TOKEN is required');
 }
 
-const bot = new Telegraf(TELEGRAM_TOKEN);
+const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 bot.start((ctx) => {
@@ -36,7 +36,17 @@ bot.on('text', async (ctx) => {
   await ctx.reply(`✅ Задача сохранена: ${text}`);
 });
 
-bot.launch();
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// ВАЖНО: Этот блок заменяет bot.launch() для работы на Vercel
+module.exports = async (req, res) => {
+  try {
+    if (req.method === 'POST') {
+      await bot.handleUpdate(req.body);
+      res.status(200).send('OK');
+    } else {
+      res.status(200).send('Бот активен (используйте POST запросы)');
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Internal Server Error');
+  }
+};
