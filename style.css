@@ -278,8 +278,14 @@ main {
 }
 
 .group-rename {
-  padding: 4px 8px;
-  font-size: 12px;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
 }
 
 

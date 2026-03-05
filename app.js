@@ -674,7 +674,7 @@ function renderCalendar() {
           <h4>${group.name || 'Группа'}</h4>
           <div class="task-group-controls">
             <input class="group-color-input" type="color" value="${groupColor}" title="Цвет группы" />
-            <button class="group-rename" type="button">Название</button>
+            <button class="group-rename" type="button" title="Изменить название группы">✎</button>
           </div>
         </div>
         <ul class="tasks"></ul>
@@ -1271,17 +1271,30 @@ if (spaceActionDelete) {
   spaceActionDelete.addEventListener('click', () => {
     if (!spaceActionTargetKey) return;
     const target = spaceActionTargetKey;
+    if (!(target in state.spaces)) {
+      setSpaceActionMenuOpen(false);
+      return;
+    }
+
     const isCore = target === 'management' || target === 'notes';
     commit(isCore ? `Очищено пространство «${getSpaceLabel(target, state)}»` : `Удалено пространство «${getSpaceLabel(target, state)}»`, (st) => {
+      if (!st.spaceNames) st.spaceNames = { ...SPACES };
+
       if (isCore) {
         st.spaces[target] = createSpaceState();
       } else {
         delete st.spaces[target];
         delete st.spaceNames[target];
       }
-      if (st.activeSpace === target) {
+
+      if (Object.keys(st.spaces).length === 0) {
+        st.spaces.management = createSpaceState();
+      }
+
+      if (!(st.activeSpace in st.spaces)) {
         st.activeSpace = st.spaces.management ? 'management' : Object.keys(st.spaces)[0];
       }
+
       currentBoardTaskId = null;
     });
     setSpaceActionMenuOpen(false);
@@ -1397,6 +1410,8 @@ if (ctxColor) {
         if (t) t.color = nextColor;
       });
     });
+    clearTaskSelection();
+    setTaskContextMenuOpen(false);
   });
 }
 
