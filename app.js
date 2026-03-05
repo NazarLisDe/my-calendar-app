@@ -57,6 +57,51 @@ let isTaskContextMenuOpen = false;
 let isDockMenuOpen = false;
 let isNotesPanelOpen = false;
 let taskContextTarget = null;
+const LONG_PRESS_MS = 360;
+const LONG_PRESS_MOVE_PX = 14;
+
+function attachTouchContextAction(node, onLongPress, shouldStart = () => true) {
+  let pressTimer = null;
+  let pressPoint = null;
+  let longPressTriggered = false;
+
+  const clearPress = () => {
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = null;
+    pressPoint = null;
+  };
+
+  node.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    if (!shouldStart(e)) return;
+    const touch = e.touches[0];
+    longPressTriggered = false;
+    pressPoint = { x: touch.clientX, y: touch.clientY };
+    pressTimer = setTimeout(() => {
+      if (!pressPoint) return;
+      longPressTriggered = true;
+      onLongPress(pressPoint.x, pressPoint.y, e);
+      clearPress();
+    }, LONG_PRESS_MS);
+  }, { passive: true });
+
+  node.addEventListener('touchmove', (e) => {
+    if (!pressTimer || !pressPoint || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const delta = Math.hypot(touch.clientX - pressPoint.x, touch.clientY - pressPoint.y);
+    if (delta > LONG_PRESS_MOVE_PX) clearPress();
+  }, { passive: true });
+
+  node.addEventListener('touchend', clearPress);
+  node.addEventListener('touchcancel', clearPress);
+
+  node.addEventListener('click', (e) => {
+    if (!longPressTriggered) return;
+    longPressTriggered = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+}
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -542,6 +587,12 @@ function buildTaskNode(task, day, handleDayDrop) {
     openTaskContextMenu(e.clientX, e.clientY, day, task);
   });
 
+  attachTouchContextAction(node, (x, y) => {
+    const key = getTaskSelectionKey(day, task.id);
+    if (!selectedTaskKeys.has(key)) selectedTaskKeys = new Set([key]);
+    openTaskContextMenu(x, y, day, task);
+  }, (e) => !e.target.closest('input, textarea, .task-color, .to-background, .edit'));
+
   node.addEventListener('dragstart', (e) => {
     if (e.target.closest('.to-background')) return;
     dragTask = { fromDay: day, taskId: task.id };
@@ -808,6 +859,13 @@ function renderTaskDock(s) {
         if (t) t.pinned = !t.pinned;
       });
     });
+
+    attachTouchContextAction(node, () => {
+      commit('Изменён статус закрепления', (st) => {
+        const t = getActiveSpace(st).dockTasks.find((x) => x.id === task.id);
+        if (t) t.pinned = !t.pinned;
+      });
+    }, (e) => !e.target.closest('textarea, input, button.edit, button.delete'));
 
     node.addEventListener('dragstart', () => {
       dragTask = { fromDay: null, taskId: task.id, fromDock: true };
@@ -1136,6 +1194,17 @@ if (spaceMenuElement) {
     renderSpaceOptions();
     setSpaceActionMenuOpen(true, e.clientX, e.clientY);
   });
+
+  attachTouchContextAction(spaceMenuElement, (x, y, event) => {
+    const btn = event.target.closest('.space-option');
+    if (!btn) return;
+    const key = btn.dataset.space;
+    if (!(key in state.spaces)) return;
+    if (!selectedSpaceKeys.has(key)) selectedSpaceKeys = new Set([key]);
+    spaceActionTargetKey = key;
+    renderSpaceOptions();
+    setSpaceActionMenuOpen(true, x, y);
+  }, (e) => Boolean(e.target.closest('.space-option')));
 }
 
 document.addEventListener('click', (e) => {

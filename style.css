@@ -672,3 +672,81 @@ main {
   padding: 0;
   background: transparent;
 }
+
+
+@media (max-width: 900px) {
+  main {
+    padding: 10px;
+  }
+
+  .topbar {
+    padding: 12px;
+  }
+
+  .topbar-title-wrap,
+  .topbar-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .topbar h1 {
+    font-size: 18px;
+  }
+
+  .topbar-actions button,
+  .topbar-title-wrap > .space-menu-wrap > button {
+    flex: 1 1 auto;
+    min-width: 140px;
+  }
+
+  .calendar-grid {
+    grid-template-columns: repeat(7, minmax(260px, 1fr));
+    gap: 8px;
+  }
+
+  .day-column {
+    min-height: 420px;
+  }
+
+  .board-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .board-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .board-canvas-wrapper {
+    height: 55vh;
+  }
+
+  .notes-panel,
+  .history-panel {
+    top: auto;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    width: auto;
+    max-height: 58vh;
+    border-radius: 12px;
+  }
+
+  .notes-panel {
+    transform: translateY(calc(100% + 14px));
+  }
+
+  .history-panel {
+    transform: translateY(calc(100% + 14px));
+  }
+
+  .notes-panel.open,
+  .history-panel.open {
+    transform: translateY(0);
+  }
+
+  .task-context-menu,
+  .space-action-menu {
+    min-width: min(92vw, 300px);
+  }
+}
