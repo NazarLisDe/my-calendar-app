@@ -11,7 +11,9 @@ function createSpaceState() {
   return {
     days: Object.fromEntries(DAYS.map((d) => [d, []])),
     dayBackgrounds: Object.fromEntries(DAYS.map((d) => [d, null])),
-    boards: {}
+    boards: {},
+    dockTasks: [],
+    taskGroups: []
   };
 }
 
@@ -21,6 +23,7 @@ const defaultState = () => ({
   nextTaskId: 1,
   nextCloudId: 1,
   nextGroupId: 1,
+  nextTaskGroupId: 1,
   spaceNames: { ...SPACES },
   spaces: {
     management: createSpaceState(),
@@ -38,12 +41,14 @@ let dragCloud = null;
 let dragCloudNote = null;
 let dragBackgroundTask = null;
 let selectedCloudIds = new Set();
+let selectedTaskKeys = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
 let isSpaceMenuOpen = false;
 let isSpaceActionMenuOpen = false;
 let spaceActionTargetKey = null;
 let isTaskContextMenuOpen = false;
+let isDockMenuOpen = false;
 let taskContextTarget = null;
 
 function loadState() {
@@ -112,6 +117,30 @@ function getTaskById(taskId, s = state) {
   return null;
 }
 
+function getTaskSelectionKey(day, taskId) {
+  return `${day}|${taskId}`;
+}
+
+function parseTaskSelectionKey(key) {
+  const [day, taskIdRaw] = key.split('|');
+  return { day, taskId: Number(taskIdRaw) };
+}
+
+function getSelectedTaskRefs() {
+  return [...selectedTaskKeys].map(parseTaskSelectionKey).filter((item) => item.day && Number.isFinite(item.taskId));
+}
+
+function getTaskContextSelection() {
+  const picks = getSelectedTaskRefs();
+  if (picks.length > 0) return picks;
+  if (!taskContextTarget) return [];
+  return [{ day: taskContextTarget.day, taskId: taskContextTarget.taskId }];
+}
+
+function clearTaskSelection() {
+  selectedTaskKeys = new Set();
+}
+
 function ensureBoard(st, taskId) {
   const space = getActiveSpace(st);
   if (!space.boards[taskId]) {
@@ -158,6 +187,14 @@ function setInstructionsOpen(open) {
   panel.setAttribute('aria-hidden', String(!open));
   toggle.setAttribute('aria-expanded', String(open));
   toggle.textContent = open ? 'Скрыть инструкцию' : 'Инструкция';
+}
+
+function setDockMenuOpen(open) {
+  isDockMenuOpen = open;
+  const dock = document.getElementById('taskDock');
+  const toggle = document.getElementById('toggleDockMenu');
+  if (dock) dock.classList.toggle('hidden', !open);
+  if (toggle) toggle.setAttribute('aria-expanded', String(open));
 }
 
 function setSpaceMenuOpen(open) {
@@ -234,7 +271,8 @@ function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, pl
     title: extractTaskTitleFromCloudText(cloud.text),
     color: null,
     pinned: false,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    taskGroupId: null
   };
 
   const destination = active.days[toDay];
@@ -333,12 +371,20 @@ function setTaskContextMenuOpen(open, x = 0, y = 0) {
 }
 
 function openTaskContextMenu(x, y, day, task) {
+  const key = getTaskSelectionKey(day, task.id);
+  if (!selectedTaskKeys.has(key)) {
+    selectedTaskKeys = new Set([key]);
+  }
   taskContextTarget = { day, taskId: task.id };
+  const selection = getTaskContextSelection();
   const pinBtn = document.getElementById('ctxPin');
   const colorInput = document.getElementById('ctxColor');
+  const groupBtn = document.getElementById('ctxCreateGroup');
   if (pinBtn) pinBtn.textContent = task.pinned ? 'Открепить' : 'Закрепить';
   if (colorInput) colorInput.value = task.color || '#5a6cff';
+  if (groupBtn) groupBtn.classList.toggle('hidden', selection.length < 2);
   setTaskContextMenuOpen(true, x, y);
+  renderCalendar();
 }
 
 function setSpaceActionMenuOpen(open, x = 0, y = 0) {
@@ -366,7 +412,9 @@ function normalizeImportedSpaceData(raw) {
   return {
     days: { ...base.days, ...(raw.days || {}) },
     dayBackgrounds: { ...base.dayBackgrounds, ...(raw.dayBackgrounds || {}) },
-    boards: { ...base.boards, ...(raw.boards || {}) }
+    boards: { ...base.boards, ...(raw.boards || {}) },
+    dockTasks: Array.isArray(raw.dockTasks) ? raw.dockTasks : [],
+    taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : []
   };
 }
 
@@ -382,10 +430,61 @@ function downloadJson(filename, payload) {
   URL.revokeObjectURL(url);
 }
 
+function buildTaskNode(task, day, handleDayDrop) {
+  const tpl = document.getElementById('taskTemplate');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  if (task.pinned) node.classList.add('pinned');
+  if (selectedTaskKeys.has(getTaskSelectionKey(day, task.id))) node.classList.add('selected');
+  node.querySelector('.open-board').textContent = task.title;
+  node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
+  enableInlineTaskTitleEdit(node, task, day);
+
+  if (task.color) {
+    node.style.setProperty('--task-color', task.color);
+  }
+
+  node.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (!e.ctrlKey) return;
+    if (e.target.closest('button, input, textarea')) return;
+    e.preventDefault();
+    const key = getTaskSelectionKey(day, task.id);
+    if (selectedTaskKeys.has(key)) {
+      selectedTaskKeys.delete(key);
+    } else {
+      selectedTaskKeys.add(key);
+    }
+    renderCalendar();
+  });
+
+  node.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const key = getTaskSelectionKey(day, task.id);
+    if (!selectedTaskKeys.has(key)) selectedTaskKeys = new Set([key]);
+    openTaskContextMenu(e.clientX, e.clientY, day, task);
+  });
+
+  node.addEventListener('dragstart', (e) => {
+    if (e.target.closest('.to-background')) return;
+    dragTask = { fromDay: day, taskId: task.id };
+  });
+
+  node.addEventListener('dragover', (e) => e.preventDefault());
+  node.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const rect = node.getBoundingClientRect();
+    const placeAfter = e.clientY > rect.top + rect.height / 2;
+    handleDayDrop(task.id, placeAfter);
+  });
+
+  return node;
+}
+
 function renderCalendar() {
   const s = effectiveState();
   const grid = document.getElementById('calendarGrid');
   const space = getActiveSpace(s);
+  const taskGroups = Array.isArray(space.taskGroups) ? space.taskGroups : [];
   grid.innerHTML = '';
 
   DAYS.forEach((day) => {
@@ -401,7 +500,10 @@ function renderCalendar() {
         <input name="title" placeholder="Новая задача" required />
         <button type="submit">+</button>
       </form>
-      <ul class="tasks"></ul>
+      <div class="tasks-area">
+        <div class="task-groups"></div>
+        <ul class="tasks"></ul>
+      </div>
     `;
 
     const bgLabel = col.querySelector('.day-background-label');
@@ -455,7 +557,7 @@ function renderCalendar() {
       const title = input.value.trim();
       if (!title) return;
       commit(`Добавлена задача «${title}»`, (st) => {
-        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, color: null, pinned: false, createdAt: Date.now() });
+        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, color: null, pinned: false, createdAt: Date.now(), taskGroupId: null });
       });
     });
 
@@ -467,6 +569,7 @@ function renderCalendar() {
     });
 
     const list = col.querySelector('.tasks');
+    const groupsWrap = col.querySelector('.task-groups');
     col.addEventListener('dragover', (e) => {
       if (dragTask || dragCloudNote || dragBackgroundTask) e.preventDefault();
     });
@@ -481,38 +584,61 @@ function renderCalendar() {
       handleDayDrop();
     });
 
-    space.days[day].forEach((task) => {
-      const tpl = document.getElementById('taskTemplate');
-      const node = tpl.content.firstElementChild.cloneNode(true);
-      if (task.pinned) node.classList.add('pinned');
-      node.querySelector('.open-board').textContent = task.title;
-      node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
-      enableInlineTaskTitleEdit(node, task, day);
+    const dayTasks = space.days[day];
+    const groupedTaskIds = new Set(taskGroups.flatMap((group) => group.taskIds || []));
+    const groupsForDay = taskGroups.filter((group) => (group.taskIds || []).some((id) => dayTasks.some((task) => task.id === id)));
 
-      if (task.color) {
-        node.style.setProperty('--task-color', task.color);
-      }
+    groupsForDay.forEach((group) => {
+      const groupTasks = dayTasks.filter((task) => (group.taskIds || []).includes(task.id));
+      if (groupTasks.length === 0) return;
+      const groupEl = document.createElement('section');
+      groupEl.className = 'task-group-column';
+      const groupColor = group.color || '#8ea1ff';
+      groupEl.style.setProperty('--group-color', groupColor);
+      groupEl.innerHTML = `
+        <div class="task-group-header">
+          <h4>${group.name || 'Группа'}</h4>
+          <div class="task-group-controls">
+            <input class="group-color-input" type="color" value="${groupColor}" title="Цвет группы" />
+            <button class="group-rename" type="button">Название</button>
+          </div>
+        </div>
+        <ul class="tasks"></ul>
+      `;
+      const groupList = groupEl.querySelector('.tasks');
+      groupTasks.forEach((task) => groupList.append(buildTaskNode(task, day, handleDayDrop)));
 
-      node.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        openTaskContextMenu(e.clientX, e.clientY, day, task);
+      const colorInput = groupEl.querySelector('.group-color-input');
+      colorInput.addEventListener('change', (e) => {
+        const nextColor = e.target.value;
+        commit('Изменён цвет группы задач', (st) => {
+          const active = getActiveSpace(st);
+          const targetGroup = (active.taskGroups || []).find((item) => item.id === group.id);
+          if (targetGroup) targetGroup.color = nextColor;
+        });
       });
 
-      node.addEventListener('dragstart', (e) => {
-        if (e.target.closest('.to-background')) return;
-        dragTask = { fromDay: day, taskId: task.id };
+      const renameBtn = groupEl.querySelector('.group-rename');
+      renameBtn.addEventListener('click', () => {
+        const nextName = prompt('Название группы', group.name || '');
+        if (nextName === null) return;
+        const cleanName = nextName.trim();
+        if (!cleanName) return;
+        commit('Изменено название группы задач', (st) => {
+          const active = getActiveSpace(st);
+          const targetGroup = (active.taskGroups || []).find((item) => item.id === group.id);
+          if (targetGroup) targetGroup.name = cleanName;
+        });
       });
 
-      node.addEventListener('dragover', (e) => e.preventDefault());
-      node.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const rect = node.getBoundingClientRect();
-        const placeAfter = e.clientY > rect.top + rect.height / 2;
-        handleDayDrop(task.id, placeAfter);
-      });
-
-      list.append(node);
+      groupsWrap.append(groupEl);
     });
+
+    dayTasks
+      .filter((task) => !groupedTaskIds.has(task.id))
+      .forEach((task) => {
+        list.append(buildTaskNode(task, day, handleDayDrop));
+      });
 
     grid.append(col);
   });
@@ -843,6 +969,10 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
   if (isSpaceActionMenuOpen && !e.target.closest('#spaceActionMenu') && !e.target.closest('.space-option')) setSpaceActionMenuOpen(false);
   if (isTaskContextMenuOpen && !e.target.closest('#taskContextMenu') && !e.target.closest('.task')) setTaskContextMenuOpen(false);
+  if (!e.target.closest('.task') && !e.ctrlKey) {
+    clearTaskSelection();
+    renderCalendar();
+  }
 });
 
 document.getElementById('themeToggle').addEventListener('click', () => {
@@ -1025,6 +1155,12 @@ if (importSpaceBtn && importSpaceInput) {
     const target = typeof parsed.spaceKey === 'string' && parsed.spaceKey.trim() ? parsed.spaceKey.trim() : fallbackKey;
     const label = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : (SPACES[target] || target);
 
+    if (target in state.spaces) {
+      alert('Импортированное пространство не будет импортировано, если оно уже существует в списке.');
+      importSpaceInput.value = '';
+      return;
+    }
+
     commit(`Импортировано пространство в «${label}»`, (st) => {
       if (!st.spaceNames) st.spaceNames = { ...SPACES };
       st.spaceNames[target] = label;
@@ -1038,15 +1174,20 @@ const ctxPin = document.getElementById('ctxPin');
 const ctxBackground = document.getElementById('ctxBackground');
 const ctxDelete = document.getElementById('ctxDelete');
 const ctxColor = document.getElementById('ctxColor');
+const ctxCreateGroup = document.getElementById('ctxCreateGroup');
 
 if (ctxPin) {
   ctxPin.addEventListener('click', () => {
-    if (!taskContextTarget) return;
-    const { day, taskId } = taskContextTarget;
+    const picks = getTaskContextSelection();
+    if (picks.length === 0) return;
     commit('Изменён статус закрепления', (st) => {
-      const t = getActiveSpace(st).days[day].find((x) => x.id === taskId);
-      if (t) t.pinned = !t.pinned;
+      const active = getActiveSpace(st);
+      picks.forEach(({ day, taskId }) => {
+        const t = active.days[day].find((x) => x.id === taskId);
+        if (t) t.pinned = !t.pinned;
+      });
     });
+    clearTaskSelection();
     setTaskContextMenuOpen(false);
   });
 }
@@ -1065,34 +1206,61 @@ if (ctxBackground) {
       delete active.boards[task.id];
       if (currentBoardTaskId === task.id) currentBoardTaskId = null;
     });
+    clearTaskSelection();
     setTaskContextMenuOpen(false);
   });
 }
 
 if (ctxDelete) {
   ctxDelete.addEventListener('click', () => {
-    if (!taskContextTarget) return;
-    const { day, taskId } = taskContextTarget;
+    const picks = getTaskContextSelection();
+    if (picks.length === 0) return;
     commit('Удалена задача через меню', (st) => {
       const active = getActiveSpace(st);
-      active.days[day] = active.days[day].filter((t) => t.id !== taskId);
-      delete active.boards[taskId];
-      if (currentBoardTaskId === taskId) currentBoardTaskId = null;
+      picks.forEach(({ day, taskId }) => {
+        active.days[day] = active.days[day].filter((t) => t.id !== taskId);
+        delete active.boards[taskId];
+        if (currentBoardTaskId === taskId) currentBoardTaskId = null;
+      });
+      active.taskGroups = (active.taskGroups || []).map((group) => ({
+        ...group,
+        taskIds: (group.taskIds || []).filter((id) => !picks.some((pick) => pick.taskId === id))
+      })).filter((group) => group.taskIds.length > 1);
     });
+    clearTaskSelection();
     setTaskContextMenuOpen(false);
   });
 }
 
 if (ctxColor) {
   ctxColor.addEventListener('change', (e) => {
-    if (!taskContextTarget) return;
-    const { day, taskId } = taskContextTarget;
+    const picks = getTaskContextSelection();
+    if (picks.length === 0) return;
     const nextColor = e.target.value;
     commit('Изменён цвет задачи через меню', (st) => {
-      const t = getActiveSpace(st).days[day].find((x) => x.id === taskId);
-      if (!t) return;
-      t.color = nextColor;
+      const active = getActiveSpace(st);
+      picks.forEach(({ day, taskId }) => {
+        const t = active.days[day].find((x) => x.id === taskId);
+        if (t) t.color = nextColor;
+      });
     });
+  });
+}
+
+
+if (ctxCreateGroup) {
+  ctxCreateGroup.addEventListener('click', () => {
+    const picks = getTaskContextSelection();
+    if (picks.length < 2) return;
+    commit('Создана группа задач календаря', (st) => {
+      const active = getActiveSpace(st);
+      if (!Array.isArray(active.taskGroups)) active.taskGroups = [];
+      const groupId = st.nextTaskGroupId++;
+      const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
+      active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, color: '#8ea1ff', taskIds });
+    });
+    clearTaskSelection();
+    setTaskContextMenuOpen(false);
   });
 }
 
