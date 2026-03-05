@@ -13,8 +13,20 @@
       <div class="space-menu-wrap">
         <button id="spaceMenuToggle" type="button" aria-expanded="false">Пространство: Управление</button>
         <div id="spaceMenu" class="space-menu hidden" role="menu">
-          <button type="button" class="space-option" data-space="management" role="menuitem">Управление</button>
-          <button type="button" class="space-option" data-space="notes" role="menuitem">Заметки</button>
+          <div class="space-list">
+            <button type="button" class="space-option" data-space="management" role="menuitem">Управление</button>
+            <button type="button" class="space-option" data-space="notes" role="menuitem">Заметки</button>
+          </div>
+          <div class="space-menu-footer">
+            <button id="importSpaceBtn" type="button">Импорт пространства</button>
+            <input id="importSpaceInput" class="hidden" type="file" accept="application/json" />
+          </div>
+        </div>
+        <div id="spaceActionMenu" class="space-action-menu hidden" role="menu" aria-hidden="true">
+          <button id="spaceActionSelect" type="button">Выделить</button>
+          <button id="spaceActionCopy" type="button">Копировать</button>
+          <button id="spaceActionExport" type="button">Экспортировать</button>
+          <button id="spaceActionDelete" type="button">Удалить</button>
         </div>
       </div>
     </div>

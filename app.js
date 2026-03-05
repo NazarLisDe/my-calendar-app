@@ -40,6 +40,8 @@ let selectedCloudIds = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
 let isSpaceMenuOpen = false;
+let isSpaceActionMenuOpen = false;
+let spaceActionTargetKey = null;
 let isTaskContextMenuOpen = false;
 let taskContextTarget = null;
 
@@ -339,6 +341,47 @@ function openTaskContextMenu(x, y, day, task) {
   if (pinBtn) pinBtn.textContent = task.pinned ? 'Открепить' : 'Закрепить';
   if (colorInput) colorInput.value = task.color || '#5a6cff';
   setTaskContextMenuOpen(true, x, y);
+}
+
+function setSpaceActionMenuOpen(open, x = 0, y = 0) {
+  isSpaceActionMenuOpen = open;
+  const menu = document.getElementById('spaceActionMenu');
+  if (!menu) return;
+  if (!open) {
+    menu.classList.add('hidden');
+    menu.setAttribute('aria-hidden', 'true');
+    spaceActionTargetKey = null;
+    return;
+  }
+
+  const maxX = window.innerWidth - menu.offsetWidth - 10;
+  const maxY = window.innerHeight - menu.offsetHeight - 10;
+  menu.style.left = `${Math.max(10, Math.min(x, maxX))}px`;
+  menu.style.top = `${Math.max(10, Math.min(y, maxY))}px`;
+  menu.classList.remove('hidden');
+  menu.setAttribute('aria-hidden', 'false');
+}
+
+function normalizeImportedSpaceData(raw) {
+  const base = createSpaceState();
+  if (!raw || typeof raw !== 'object') return base;
+  return {
+    days: { ...base.days, ...(raw.days || {}) },
+    dayBackgrounds: { ...base.dayBackgrounds, ...(raw.dayBackgrounds || {}) },
+    boards: { ...base.boards, ...(raw.boards || {}) }
+  };
+}
+
+function downloadJson(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function renderCalendar() {
@@ -736,20 +779,33 @@ document.getElementById('spaceMenuToggle').addEventListener('click', () => {
   setSpaceMenuOpen(!isSpaceMenuOpen);
 });
 
+function switchSpace(nextSpace) {
+  if (!(nextSpace in SPACES)) return;
+  commit(`Переключено пространство на «${SPACES[nextSpace]}»`, (st) => {
+    st.activeSpace = nextSpace;
+  });
+  setSpaceMenuOpen(false);
+  setSpaceActionMenuOpen(false);
+  currentBoardTaskId = null;
+}
+
 document.querySelectorAll('.space-option').forEach((btn) => {
   btn.addEventListener('click', () => {
-    const nextSpace = btn.dataset.space;
-    if (!(nextSpace in SPACES)) return;
-    commit(`Переключено пространство на «${SPACES[nextSpace]}»`, (st) => {
-      st.activeSpace = nextSpace;
-    });
-    setSpaceMenuOpen(false);
-    currentBoardTaskId = null;
+    switchSpace(btn.dataset.space);
+  });
+
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const key = btn.dataset.space;
+    if (!(key in SPACES)) return;
+    spaceActionTargetKey = key;
+    setSpaceActionMenuOpen(true, e.clientX, e.clientY);
   });
 });
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
+  if (isSpaceActionMenuOpen && !e.target.closest('#spaceActionMenu') && !e.target.closest('.space-option')) setSpaceActionMenuOpen(false);
   if (isTaskContextMenuOpen && !e.target.closest('#taskContextMenu') && !e.target.closest('.task')) setTaskContextMenuOpen(false);
 });
 
@@ -774,6 +830,7 @@ document.addEventListener('keydown', (e) => {
     if (isHistoryOpen) setHistoryOpen(false);
     if (isInstructionsOpen) setInstructionsOpen(false);
     if (isSpaceMenuOpen) setSpaceMenuOpen(false);
+    if (isSpaceActionMenuOpen) setSpaceActionMenuOpen(false);
     if (isTaskContextMenuOpen) setTaskContextMenuOpen(false);
   }
 });
@@ -843,6 +900,89 @@ document.getElementById('backToCalendar').addEventListener('click', () => {
   selectedCloudIds = new Set();
   renderBoard();
 });
+
+const spaceActionSelect = document.getElementById('spaceActionSelect');
+const spaceActionCopy = document.getElementById('spaceActionCopy');
+const spaceActionExport = document.getElementById('spaceActionExport');
+const spaceActionDelete = document.getElementById('spaceActionDelete');
+const importSpaceBtn = document.getElementById('importSpaceBtn');
+const importSpaceInput = document.getElementById('importSpaceInput');
+
+if (spaceActionSelect) {
+  spaceActionSelect.addEventListener('click', () => {
+    if (!spaceActionTargetKey) return;
+    switchSpace(spaceActionTargetKey);
+  });
+}
+
+if (spaceActionCopy) {
+  spaceActionCopy.addEventListener('click', async () => {
+    if (!spaceActionTargetKey) return;
+    const payload = {
+      name: SPACES[spaceActionTargetKey],
+      spaceKey: spaceActionTargetKey,
+      data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpace: spaceActionTargetKey }))
+    };
+    const text = JSON.stringify(payload, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Пространство скопировано в буфер обмена.');
+    } catch {
+      alert('Не удалось скопировать автоматически.');
+    }
+    setSpaceActionMenuOpen(false);
+  });
+}
+
+if (spaceActionExport) {
+  spaceActionExport.addEventListener('click', () => {
+    if (!spaceActionTargetKey) return;
+    const payload = {
+      name: SPACES[spaceActionTargetKey],
+      spaceKey: spaceActionTargetKey,
+      exportedAt: new Date().toISOString(),
+      data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpace: spaceActionTargetKey }))
+    };
+    downloadJson(`space-${spaceActionTargetKey}.json`, payload);
+    setSpaceActionMenuOpen(false);
+  });
+}
+
+if (spaceActionDelete) {
+  spaceActionDelete.addEventListener('click', () => {
+    if (!spaceActionTargetKey) return;
+    const target = spaceActionTargetKey;
+    commit(`Очищено пространство «${SPACES[target]}»`, (st) => {
+      st.spaces[target] = createSpaceState();
+      if (st.activeSpace === target) currentBoardTaskId = null;
+    });
+    setSpaceActionMenuOpen(false);
+  });
+}
+
+if (importSpaceBtn && importSpaceInput) {
+  importSpaceBtn.addEventListener('click', () => importSpaceInput.click());
+  importSpaceInput.addEventListener('change', async () => {
+    const file = importSpaceInput.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      alert('Файл импорта не является корректным JSON.');
+      importSpaceInput.value = '';
+      return;
+    }
+
+    const target = parsed.spaceKey in SPACES ? parsed.spaceKey : state.activeSpace;
+    const imported = normalizeImportedSpaceData(parsed.data || parsed);
+    commit(`Импортировано пространство в «${SPACES[target]}»`, (st) => {
+      st.spaces[target] = imported;
+    });
+    importSpaceInput.value = '';
+  });
+}
 
 const ctxPin = document.getElementById('ctxPin');
 const ctxBackground = document.getElementById('ctxBackground');

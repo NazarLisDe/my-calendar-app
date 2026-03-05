@@ -72,8 +72,8 @@ button:hover { border-color: var(--accent); }
 
 .space-menu {
   position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  top: 0;
+  left: calc(100% + 8px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -88,6 +88,42 @@ button:hover { border-color: var(--accent); }
   text-align: left;
   background: transparent;
   border: 0;
+}
+
+.space-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.space-menu-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+#importSpaceBtn {
+  width: 100%;
+}
+
+.space-action-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px color-mix(in srgb, #000 22%, transparent);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.space-action-menu button {
+  width: 100%;
+  text-align: left;
+  background: var(--surface-soft);
 }
 
 main {
@@ -387,43 +423,10 @@ main {
   .topbar-title-wrap,
   .topbar-actions { justify-content: space-between; }
 
-  .task-dock-toolbar {
-    align-items: stretch;
-  }
-
-  .task-dock-menu {
-    right: auto;
+  .space-menu {
     left: 0;
+    top: calc(100% + 6px);
   }
-}
-
-.dock-tasks {
-  list-style: none;
-  margin: 0;
-}
-
-.dock-tasks .task {
-  margin-bottom: 8px;
-}
-
-.dock-tasks .task:last-child {
-  margin-bottom: 0;
-}
-
-.task .to-background {
-  color: var(--text-soft);
-}
-
-.task .to-background {
-  color: var(--text-soft);
-}
-
-.task .to-background {
-  color: var(--text-soft);
-}
-
-.task .to-background {
-  color: var(--text-soft);
 }
 
 
