@@ -65,6 +65,9 @@
         <h3>Инструкция</h3>
         <ul>
           <li>Выберите задачу в колонке, чтобы открыть её доску внизу.</li>
+          <li>Импорт пространства будет отклонён, если такое пространство уже есть в списке.</li>
+          <li>В календаре можно выделить несколько задач через <strong>Ctrl + ЛКМ</strong> и на <strong>ПКМ</strong> открыть меню.</li>
+          <li>Если выделено больше двух задач, в меню появляется кнопка <strong>Создать группу</strong>.</li>
           <li>Выделение заметки: <strong>Ctrl + ЛКМ</strong> по заметке.</li>
           <li>Удаление выделенного: нажмите клавишу <strong>Delete</strong>.</li>
         </ul>
@@ -100,6 +103,7 @@
   <div id="taskContextMenu" class="task-context-menu hidden" role="menu" aria-hidden="true">
     <button id="ctxPin" type="button">Закрепить</button>
     <button id="ctxBackground" type="button">Перенести на фон дня</button>
+    <button id="ctxCreateGroup" class="hidden" type="button">Создать группу</button>
     <label class="ctx-color-wrap">Цвет задачи <input id="ctxColor" type="color" value="#5a6cff" /></label>
     <button id="ctxDelete" type="button">Удалить</button>
   </div>
