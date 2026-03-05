@@ -14,7 +14,8 @@ function createSpaceState() {
     dayNotes: Object.fromEntries(DAYS.map((d) => [d, ''])),
     boards: {},
     dockTasks: [],
-    taskGroups: []
+    taskGroups: [],
+    sideNotes: []
   };
 }
 
@@ -25,6 +26,7 @@ const defaultState = () => ({
   nextCloudId: 1,
   nextGroupId: 1,
   nextTaskGroupId: 1,
+  nextSideNoteId: 1,
   spaceNames: { ...SPACES },
   spaces: {
     management: createSpaceState(),
@@ -41,6 +43,7 @@ let dragTask = null;
 let dragCloud = null;
 let dragCloudNote = null;
 let dragBackgroundTask = null;
+let dragSideNote = null;
 let selectedCloudIds = new Set();
 let selectedTaskKeys = new Set();
 let isHistoryOpen = false;
@@ -50,6 +53,7 @@ let isSpaceActionMenuOpen = false;
 let spaceActionTargetKey = null;
 let isTaskContextMenuOpen = false;
 let isDockMenuOpen = false;
+let isNotesPanelOpen = false;
 let taskContextTarget = null;
 
 function loadState() {
@@ -83,7 +87,10 @@ function loadState() {
           days: parsed.days || createSpaceState().days,
           dayBackgrounds: parsed.dayBackgrounds || createSpaceState().dayBackgrounds,
           dayNotes: parsed.dayNotes || createSpaceState().dayNotes,
-          boards: parsed.boards || {}
+          boards: parsed.boards || {},
+          dockTasks: parsed.dockTasks || [],
+          taskGroups: parsed.taskGroups || [],
+          sideNotes: parsed.sideNotes || []
         },
         notes: createSpaceState()
       }
@@ -199,6 +206,15 @@ function setDockMenuOpen(open) {
   if (toggle) toggle.setAttribute('aria-expanded', String(open));
 }
 
+function setNotesPanelOpen(open) {
+  isNotesPanelOpen = open;
+  const panel = document.getElementById('notesPanel');
+  const toggle = document.getElementById('toggleNotesPanel');
+  if (!panel || !toggle) return;
+  panel.classList.toggle('open', open);
+  toggle.setAttribute('aria-expanded', String(open));
+}
+
 function setSpaceMenuOpen(open) {
   isSpaceMenuOpen = open;
   const menu = document.getElementById('spaceMenu');
@@ -291,6 +307,37 @@ function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, pl
 
   const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
   destination.splice(insertIdx, 0, taskFromCloud);
+}
+
+function moveSideNoteToDay(st, noteId, toDay, targetTaskId = null, placeAfter = false) {
+  const active = getActiveSpace(st);
+  const noteIdx = active.sideNotes.findIndex((n) => n.id === noteId);
+  if (noteIdx < 0) return;
+
+  const [note] = active.sideNotes.splice(noteIdx, 1);
+  const task = {
+    id: st.nextTaskId++,
+    title: extractTaskTitleFromCloudText(note.text),
+    color: null,
+    pinned: false,
+    createdAt: Date.now(),
+    taskGroupId: null
+  };
+
+  const destination = active.days[toDay];
+  if (targetTaskId === null) {
+    destination.push(task);
+    return;
+  }
+
+  const targetIdx = destination.findIndex((t) => t.id === targetTaskId);
+  if (targetIdx < 0) {
+    destination.push(task);
+    return;
+  }
+
+  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
+  destination.splice(insertIdx, 0, task);
 }
 
 function enableInlineTaskTitleEdit(node, task, day) {
@@ -417,7 +464,8 @@ function normalizeImportedSpaceData(raw) {
     dayNotes: { ...base.dayNotes, ...(raw.dayNotes || {}) },
     boards: { ...base.boards, ...(raw.boards || {}) },
     dockTasks: Array.isArray(raw.dockTasks) ? raw.dockTasks : [],
-    taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : []
+    taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : [],
+    sideNotes: Array.isArray(raw.sideNotes) ? raw.sideNotes : []
   };
 }
 
@@ -554,6 +602,15 @@ function renderCalendar() {
         return true;
       }
 
+      if (dragSideNote) {
+        const { noteId } = dragSideNote;
+        commit(`Заметка бокового меню перенесена в день «${day}»`, (st) => {
+          moveSideNoteToDay(st, noteId, day, targetTaskId, placeAfter);
+        });
+        dragSideNote = null;
+        return true;
+      }
+
       if (!dragTask) return false;
       const { fromDay, taskId } = dragTask;
       if (targetTaskId === null) {
@@ -588,7 +645,7 @@ function renderCalendar() {
     const list = col.querySelector('.tasks');
     const groupsWrap = col.querySelector('.task-groups');
     col.addEventListener('dragover', (e) => {
-      if (dragTask || dragCloudNote || dragBackgroundTask) e.preventDefault();
+      if (dragTask || dragCloudNote || dragBackgroundTask || dragSideNote) e.preventDefault();
     });
     col.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -911,10 +968,67 @@ document.addEventListener('mouseup', () => {
   dragCloud = null;
 });
 
+function renderSideNotes(st = effectiveState()) {
+  const list = document.getElementById('sideNotesList');
+  if (!list) return;
+  const space = getActiveSpace(st);
+  list.innerHTML = '';
+
+  if (!Array.isArray(space.sideNotes) || space.sideNotes.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'side-note-empty';
+    empty.textContent = 'Пока нет заметок. Добавьте заметку и перетащите её в день.';
+    list.append(empty);
+    return;
+  }
+
+  space.sideNotes.forEach((note) => {
+    const li = document.createElement('li');
+    li.className = 'side-note-item';
+    li.innerHTML = `
+      <textarea>${note.text || ''}</textarea>
+      <div class="side-note-actions">
+        <button type="button" class="side-note-drag" draggable="true">Перенести в день</button>
+        <button type="button" class="side-note-delete">Удалить</button>
+      </div>
+    `;
+
+    const area = li.querySelector('textarea');
+    area.addEventListener('change', (e) => {
+      commit('Изменён текст заметки бокового меню', (stateDraft) => {
+        const target = getActiveSpace(stateDraft).sideNotes.find((x) => x.id === note.id);
+        if (target) target.text = e.target.value;
+      });
+    });
+
+    const dragBtn = li.querySelector('.side-note-drag');
+    dragBtn.addEventListener('dragstart', (e) => {
+      dragSideNote = { noteId: note.id };
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', note.text || '');
+      }
+    });
+    dragBtn.addEventListener('dragend', () => {
+      dragSideNote = null;
+    });
+
+    li.querySelector('.side-note-delete').addEventListener('click', () => {
+      commit('Удалена заметка бокового меню', (stateDraft) => {
+        const active = getActiveSpace(stateDraft);
+        active.sideNotes = active.sideNotes.filter((x) => x.id !== note.id);
+      });
+    });
+
+    list.append(li);
+  });
+}
+
 function renderAll() {
   renderCalendar();
   renderHistory();
   renderBoard();
+  renderSideNotes();
 }
 
 document.getElementById('spaceMenuToggle').addEventListener('click', () => {
@@ -985,6 +1099,7 @@ if (spaceMenuElement) {
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
+  if (isNotesPanelOpen && !e.target.closest('#notesPanel') && !e.target.closest('#toggleNotesPanel')) setNotesPanelOpen(false);
   if (isSpaceActionMenuOpen && !e.target.closest('#spaceActionMenu') && !e.target.closest('.space-option')) setSpaceActionMenuOpen(false);
   if (isTaskContextMenuOpen && !e.target.closest('#taskContextMenu') && !e.target.closest('.task')) setTaskContextMenuOpen(false);
   if (!e.target.closest('.task') && !e.ctrlKey && selectedTaskKeys.size > 0) {
@@ -997,6 +1112,11 @@ document.getElementById('themeToggle').addEventListener('click', () => {
   commit('Смена темы', (st) => {
     st.theme = st.theme === 'dark' ? 'light' : 'dark';
   });
+});
+
+document.getElementById('toggleNotesPanel').addEventListener('click', () => {
+  setNotesPanelOpen(!isNotesPanelOpen);
+  if (isNotesPanelOpen) setHistoryOpen(false);
 });
 
 document.getElementById('toggleHistory').addEventListener('click', () => {
@@ -1016,6 +1136,7 @@ document.addEventListener('keydown', (e) => {
     if (isSpaceMenuOpen) setSpaceMenuOpen(false);
     if (isSpaceActionMenuOpen) setSpaceActionMenuOpen(false);
     if (isTaskContextMenuOpen) setTaskContextMenuOpen(false);
+    if (isNotesPanelOpen) setNotesPanelOpen(false);
   }
 });
 
@@ -1077,6 +1198,20 @@ if (dockTaskForm) {
       dragTask = null;
     });
   }
+}
+
+const addSideNoteForm = document.getElementById('addSideNoteForm');
+if (addSideNoteForm) {
+  addSideNoteForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = addSideNoteForm.text.value.trim();
+    if (!text) return;
+    commit('Добавлена заметка в боковое меню', (st) => {
+      const active = getActiveSpace(st);
+      active.sideNotes.push({ id: st.nextSideNoteId++, text, createdAt: Date.now() });
+    });
+    addSideNoteForm.reset();
+  });
 }
 
 document.getElementById('backToCalendar').addEventListener('click', () => {
@@ -1363,4 +1498,5 @@ setHistoryOpen(false);
 setInstructionsOpen(false);
 setSpaceMenuOpen(false);
 setDockMenuOpen(false);
+setNotesPanelOpen(false);
 renderAll();

@@ -36,6 +36,7 @@
     <div class="topbar-actions">
       <button id="themeToggle" type="button">Тёмная тема</button>
       <button id="clearUnpinned" type="button">Очистить незакреплённые</button>
+      <button id="toggleNotesPanel" type="button" aria-expanded="false">Заметки</button>
       <button id="toggleHistory" type="button" aria-expanded="false">История</button>
     </div>
   </header>
@@ -77,6 +78,17 @@
         <div id="boardCanvas" class="board-canvas"></div>
       </div>
     </section>
+
+
+    <aside id="notesPanel" class="notes-panel">
+      <h2>Боковое меню заметок</h2>
+      <form id="addSideNoteForm" class="add-side-note-form">
+        <textarea name="text" placeholder="Новая заметка" required></textarea>
+        <button type="submit">Добавить заметку</button>
+      </form>
+      <p class="hint">Перетащите заметку в день календаря, чтобы создать задачу.</p>
+      <ul id="sideNotesList" class="side-notes-list"></ul>
+    </aside>
 
     <aside id="historyPanel" class="history-panel">
       <h2>История</h2>
