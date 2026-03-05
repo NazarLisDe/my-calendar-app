@@ -258,14 +258,13 @@ function renderSpaceOptions(st = effectiveState()) {
   const list = document.querySelector('#spaceMenu .space-list');
   if (!list) return;
   list.innerHTML = '';
-  Object.entries(st.spaceNames || {}).forEach(([key, label]) => {
-    if (!(key in st.spaces)) return;
+  Object.keys(st.spaces || {}).forEach((key) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'space-option';
     btn.dataset.space = key;
     btn.setAttribute('role', 'menuitem');
-    btn.textContent = label;
+    btn.textContent = getSpaceLabel(key, st);
     if (selectedSpaceKeys.has(key)) btn.classList.add('selected');
     list.append(btn);
   });
@@ -1268,19 +1267,11 @@ document.getElementById('backToCalendar').addEventListener('click', () => {
   renderBoard();
 });
 
-const spaceActionSelect = document.getElementById('spaceActionSelect');
 const spaceActionCopy = document.getElementById('spaceActionCopy');
 const spaceActionExport = document.getElementById('spaceActionExport');
 const spaceActionDelete = document.getElementById('spaceActionDelete');
 const importSpaceBtn = document.getElementById('importSpaceBtn');
 const importSpaceInput = document.getElementById('importSpaceInput');
-
-if (spaceActionSelect) {
-  spaceActionSelect.addEventListener('click', () => {
-    if (!spaceActionTargetKey) return;
-    switchSpace(spaceActionTargetKey);
-  });
-}
 
 if (spaceActionCopy) {
   spaceActionCopy.addEventListener('click', async () => {
@@ -1328,17 +1319,13 @@ if (spaceActionDelete) {
 
       targets.forEach((target) => {
         if (!(target in st.spaces)) return;
-        const isCore = target === 'management' || target === 'notes';
-        if (isCore) {
-          st.spaces[target] = createSpaceState();
-        } else {
-          delete st.spaces[target];
-          delete st.spaceNames[target];
-        }
+        delete st.spaces[target];
+        delete st.spaceNames[target];
       });
 
       if (Object.keys(st.spaces).length === 0) {
         st.spaces.management = createSpaceState();
+        st.spaceNames.management = SPACES.management;
       }
 
       if (!(st.activeSpace in st.spaces)) {
@@ -1461,25 +1448,6 @@ if (ctxColor) {
         if (t) t.color = nextColor;
       });
     });
-    clearTaskSelection();
-    setTaskContextMenuOpen(false);
-  });
-}
-
-
-if (ctxCreateGroup) {
-  ctxCreateGroup.addEventListener('click', () => {
-    const picks = getTaskContextSelection();
-    if (picks.length < 2) return;
-    commit('Создана группа задач календаря', (st) => {
-      const active = getActiveSpace(st);
-      if (!Array.isArray(active.taskGroups)) active.taskGroups = [];
-      const groupId = st.nextTaskGroupId++;
-      const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
-      active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, color: '#8ea1ff', taskIds });
-    });
-    clearTaskSelection();
-    setTaskContextMenuOpen(false);
   });
 }
 
