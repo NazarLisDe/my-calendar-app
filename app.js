@@ -169,7 +169,10 @@ function setSpaceMenuOpen(open) {
 }
 
 function updateSpaceButton(spaceKey, st = effectiveState()) {
-  document.getElementById('spaceMenuToggle').textContent = `Пространство: ${getSpaceLabel(spaceKey, st)}`;
+  const label = getSpaceLabel(spaceKey, st);
+  document.getElementById('spaceMenuToggle').textContent = `Пространство: ${label}`;
+  const current = document.getElementById('spaceMenuCurrentLabel');
+  if (current) current.textContent = label;
 }
 
 function renderSpaceOptions(st = effectiveState()) {
@@ -186,28 +189,6 @@ function renderSpaceOptions(st = effectiveState()) {
     btn.textContent = label;
     list.append(btn);
   });
-}
-
-function moveDockTask(st, taskId, targetTaskId = null, placeAfter = false) {
-  const space = getActiveSpace(st);
-  const list = space.dockTasks;
-  const fromIdx = list.findIndex((t) => t.id === taskId);
-  if (fromIdx < 0) return;
-
-  const [task] = list.splice(fromIdx, 1);
-  if (targetTaskId === null) {
-    list.push(task);
-    return;
-  }
-
-  const targetIdx = list.findIndex((t) => t.id === targetTaskId);
-  if (targetIdx < 0) {
-    list.push(task);
-    return;
-  }
-
-  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
-  list.splice(insertIdx, 0, task);
 }
 
 function moveTask(st, fromDay, toDay, taskId, targetTaskId = null, placeAfter = false) {
@@ -796,6 +777,20 @@ document.getElementById('spaceMenuToggle').addEventListener('click', () => {
   setSpaceMenuOpen(!isSpaceMenuOpen);
 });
 
+
+function createSpaceKey(name, st = state) {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-zа-я0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '') || 'space';
+  let key = base;
+  let index = 2;
+  while (key in st.spaces) {
+    key = `${base}-${index++}`;
+  }
+  return key;
+}
+
 function switchSpace(nextSpace) {
   if (!(nextSpace in state.spaces)) return;
   commit(`Переключено пространство на «${getSpaceLabel(nextSpace, state)}»`, (st) => {
@@ -804,6 +799,25 @@ function switchSpace(nextSpace) {
   setSpaceMenuOpen(false);
   setSpaceActionMenuOpen(false);
   currentBoardTaskId = null;
+}
+
+const addSpaceForm = document.getElementById('addSpaceForm');
+if (addSpaceForm) {
+  addSpaceForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = addSpaceForm.spaceName.value.trim();
+    if (!name) return;
+    const key = createSpaceKey(name);
+    commit(`Добавлено пространство «${name}»`, (st) => {
+      st.spaces[key] = createSpaceState();
+      if (!st.spaceNames) st.spaceNames = { ...SPACES };
+      st.spaceNames[key] = name;
+      st.activeSpace = key;
+    });
+    addSpaceForm.reset();
+    setSpaceMenuOpen(true);
+    currentBoardTaskId = null;
+  });
 }
 
 const spaceMenuElement = document.getElementById('spaceMenu');
