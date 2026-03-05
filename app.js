@@ -1264,6 +1264,23 @@ if (ctxCreateGroup) {
   });
 }
 
+
+if (ctxCreateGroup) {
+  ctxCreateGroup.addEventListener('click', () => {
+    const picks = getTaskContextSelection();
+    if (picks.length <= 2) return;
+    commit('Создана группа задач календаря', (st) => {
+      const active = getActiveSpace(st);
+      if (!Array.isArray(active.taskGroups)) active.taskGroups = [];
+      const groupId = st.nextTaskGroupId++;
+      const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
+      active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, taskIds });
+    });
+    clearTaskSelection();
+    setTaskContextMenuOpen(false);
+  });
+}
+
 document.getElementById('addCloud').addEventListener('click', () => {
   const taskId = currentBoardTaskId;
   if (!taskId) return;
