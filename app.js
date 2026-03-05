@@ -21,6 +21,7 @@ const defaultState = () => ({
   nextTaskId: 1,
   nextCloudId: 1,
   nextGroupId: 1,
+  spaceNames: { ...SPACES },
   spaces: {
     management: createSpaceState(),
     notes: createSpaceState()
@@ -53,13 +54,18 @@ function loadState() {
     const base = defaultState();
 
     if (parsed.spaces) {
+      const mergedSpaces = {};
+      for (const [key, value] of Object.entries(parsed.spaces)) {
+        mergedSpaces[key] = { ...createSpaceState(), ...(value || {}) };
+      }
+      if (!mergedSpaces.management) mergedSpaces.management = createSpaceState();
+      if (!mergedSpaces.notes) mergedSpaces.notes = createSpaceState();
+
       return {
         ...base,
         ...parsed,
-        spaces: {
-          management: { ...createSpaceState(), ...(parsed.spaces.management || {}) },
-          notes: { ...createSpaceState(), ...(parsed.spaces.notes || {}) }
-        }
+        spaceNames: { ...base.spaceNames, ...(parsed.spaceNames || {}) },
+        spaces: mergedSpaces
       };
     }
 
@@ -85,8 +91,12 @@ function persist() {
 }
 
 function getActiveSpace(st = effectiveState()) {
-  const key = st.activeSpace in SPACES ? st.activeSpace : 'management';
-  return st.spaces[key];
+  const key = st.activeSpace in st.spaces ? st.activeSpace : 'management';
+  return st.spaces[key] || st.spaces.management;
+}
+
+function getSpaceLabel(key, st = effectiveState()) {
+  return st.spaceNames?.[key] || SPACES[key] || key;
 }
 
 function getTaskById(taskId, s = state) {
@@ -158,17 +168,24 @@ function setSpaceMenuOpen(open) {
   toggle.setAttribute('aria-expanded', String(open));
 }
 
-function setDockMenuOpen(open) {
-  isDockMenuOpen = open;
-  const menu = document.getElementById('taskDockMenu');
-  const toggle = document.getElementById('toggleDockMenu');
-  if (!menu || !toggle) return;
-  menu.classList.toggle('hidden', !open);
-  toggle.setAttribute('aria-expanded', String(open));
+function updateSpaceButton(spaceKey, st = effectiveState()) {
+  document.getElementById('spaceMenuToggle').textContent = `Пространство: ${getSpaceLabel(spaceKey, st)}`;
 }
 
-function updateSpaceButton(spaceKey) {
-  document.getElementById('spaceMenuToggle').textContent = `Пространство: ${SPACES[spaceKey]}`;
+function renderSpaceOptions(st = effectiveState()) {
+  const list = document.querySelector('#spaceMenu .space-list');
+  if (!list) return;
+  list.innerHTML = '';
+  Object.entries(st.spaceNames || {}).forEach(([key, label]) => {
+    if (!(key in st.spaces)) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'space-option';
+    btn.dataset.space = key;
+    btn.setAttribute('role', 'menuitem');
+    btn.textContent = label;
+    list.append(btn);
+  });
 }
 
 function moveDockTask(st, taskId, targetTaskId = null, placeAfter = false) {
@@ -519,8 +536,8 @@ function renderCalendar() {
     grid.append(col);
   });
 
-  renderTaskDock(s);
-  updateSpaceButton(s.activeSpace);
+  renderSpaceOptions(s);
+  updateSpaceButton(s.activeSpace, s);
   applyTheme(s.theme);
 }
 
@@ -780,8 +797,8 @@ document.getElementById('spaceMenuToggle').addEventListener('click', () => {
 });
 
 function switchSpace(nextSpace) {
-  if (!(nextSpace in SPACES)) return;
-  commit(`Переключено пространство на «${SPACES[nextSpace]}»`, (st) => {
+  if (!(nextSpace in state.spaces)) return;
+  commit(`Переключено пространство на «${getSpaceLabel(nextSpace, state)}»`, (st) => {
     st.activeSpace = nextSpace;
   });
   setSpaceMenuOpen(false);
@@ -789,19 +806,24 @@ function switchSpace(nextSpace) {
   currentBoardTaskId = null;
 }
 
-document.querySelectorAll('.space-option').forEach((btn) => {
-  btn.addEventListener('click', () => {
+const spaceMenuElement = document.getElementById('spaceMenu');
+if (spaceMenuElement) {
+  spaceMenuElement.addEventListener('click', (e) => {
+    const btn = e.target.closest('.space-option');
+    if (!btn) return;
     switchSpace(btn.dataset.space);
   });
 
-  btn.addEventListener('contextmenu', (e) => {
+  spaceMenuElement.addEventListener('contextmenu', (e) => {
+    const btn = e.target.closest('.space-option');
+    if (!btn) return;
     e.preventDefault();
     const key = btn.dataset.space;
-    if (!(key in SPACES)) return;
+    if (!(key in state.spaces)) return;
     spaceActionTargetKey = key;
     setSpaceActionMenuOpen(true, e.clientX, e.clientY);
   });
-});
+}
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
@@ -919,7 +941,7 @@ if (spaceActionCopy) {
   spaceActionCopy.addEventListener('click', async () => {
     if (!spaceActionTargetKey) return;
     const payload = {
-      name: SPACES[spaceActionTargetKey],
+      name: getSpaceLabel(spaceActionTargetKey, state),
       spaceKey: spaceActionTargetKey,
       data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpace: spaceActionTargetKey }))
     };
@@ -938,7 +960,7 @@ if (spaceActionExport) {
   spaceActionExport.addEventListener('click', () => {
     if (!spaceActionTargetKey) return;
     const payload = {
-      name: SPACES[spaceActionTargetKey],
+      name: getSpaceLabel(spaceActionTargetKey, state),
       spaceKey: spaceActionTargetKey,
       exportedAt: new Date().toISOString(),
       data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpace: spaceActionTargetKey }))
@@ -952,9 +974,18 @@ if (spaceActionDelete) {
   spaceActionDelete.addEventListener('click', () => {
     if (!spaceActionTargetKey) return;
     const target = spaceActionTargetKey;
-    commit(`Очищено пространство «${SPACES[target]}»`, (st) => {
-      st.spaces[target] = createSpaceState();
-      if (st.activeSpace === target) currentBoardTaskId = null;
+    const isCore = target === 'management' || target === 'notes';
+    commit(isCore ? `Очищено пространство «${getSpaceLabel(target, state)}»` : `Удалено пространство «${getSpaceLabel(target, state)}»`, (st) => {
+      if (isCore) {
+        st.spaces[target] = createSpaceState();
+      } else {
+        delete st.spaces[target];
+        delete st.spaceNames[target];
+      }
+      if (st.activeSpace === target) {
+        st.activeSpace = st.spaces.management ? 'management' : Object.keys(st.spaces)[0];
+      }
+      currentBoardTaskId = null;
     });
     setSpaceActionMenuOpen(false);
   });
@@ -975,9 +1006,14 @@ if (importSpaceBtn && importSpaceInput) {
       return;
     }
 
-    const target = parsed.spaceKey in SPACES ? parsed.spaceKey : state.activeSpace;
     const imported = normalizeImportedSpaceData(parsed.data || parsed);
-    commit(`Импортировано пространство в «${SPACES[target]}»`, (st) => {
+    const fallbackKey = parsed.name ? `import-${Date.now()}` : state.activeSpace;
+    const target = typeof parsed.spaceKey === 'string' && parsed.spaceKey.trim() ? parsed.spaceKey.trim() : fallbackKey;
+    const label = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : (SPACES[target] || target);
+
+    commit(`Импортировано пространство в «${label}»`, (st) => {
+      if (!st.spaceNames) st.spaceNames = { ...SPACES };
+      st.spaceNames[target] = label;
       st.spaces[target] = imported;
     });
     importSpaceInput.value = '';
