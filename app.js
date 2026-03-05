@@ -11,6 +11,7 @@ function createSpaceState() {
   return {
     days: Object.fromEntries(DAYS.map((d) => [d, []])),
     dayBackgrounds: Object.fromEntries(DAYS.map((d) => [d, null])),
+    dayNotes: Object.fromEntries(DAYS.map((d) => [d, ''])),
     boards: {},
     dockTasks: [],
     taskGroups: []
@@ -81,6 +82,7 @@ function loadState() {
         management: {
           days: parsed.days || createSpaceState().days,
           dayBackgrounds: parsed.dayBackgrounds || createSpaceState().dayBackgrounds,
+          dayNotes: parsed.dayNotes || createSpaceState().dayNotes,
           boards: parsed.boards || {}
         },
         notes: createSpaceState()
@@ -412,6 +414,7 @@ function normalizeImportedSpaceData(raw) {
   return {
     days: { ...base.days, ...(raw.days || {}) },
     dayBackgrounds: { ...base.dayBackgrounds, ...(raw.dayBackgrounds || {}) },
+    dayNotes: { ...base.dayNotes, ...(raw.dayNotes || {}) },
     boards: { ...base.boards, ...(raw.boards || {}) },
     dockTasks: Array.isArray(raw.dockTasks) ? raw.dockTasks : [],
     taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : []
@@ -488,6 +491,9 @@ function renderCalendar() {
   grid.innerHTML = '';
 
   DAYS.forEach((day) => {
+    const cell = document.createElement('div');
+    cell.className = 'day-cell';
+    cell.dataset.day = day;
     const col = document.createElement('div');
     col.className = 'day-column';
     col.dataset.day = day;
@@ -510,6 +516,17 @@ function renderCalendar() {
     if (bgLabel && dayBackgroundTitle) {
       bgLabel.textContent = buildDayBackgroundPattern(dayBackgroundTitle);
     }
+
+    const notes = document.createElement('textarea');
+    notes.className = 'day-notes';
+    notes.placeholder = 'Текстовое поле под блоком дня';
+    notes.value = space.dayNotes?.[day] || '';
+    notes.addEventListener('change', (e) => {
+      const nextValue = e.target.value;
+      commit(`Обновлён текст под задачами для дня «${day}»`, (st) => {
+        getActiveSpace(st).dayNotes[day] = nextValue;
+      });
+    });
 
     const handleDayDrop = (targetTaskId = null, placeAfter = false) => {
       if (dragBackgroundTask) {
@@ -640,7 +657,8 @@ function renderCalendar() {
         list.append(buildTaskNode(task, day, handleDayDrop));
       });
 
-    grid.append(col);
+    cell.append(col, notes);
+    grid.append(cell);
   });
 
   renderSpaceOptions(s);
@@ -969,7 +987,7 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
   if (isSpaceActionMenuOpen && !e.target.closest('#spaceActionMenu') && !e.target.closest('.space-option')) setSpaceActionMenuOpen(false);
   if (isTaskContextMenuOpen && !e.target.closest('#taskContextMenu') && !e.target.closest('.task')) setTaskContextMenuOpen(false);
-  if (!e.target.closest('.task') && !e.ctrlKey) {
+  if (!e.target.closest('.task') && !e.ctrlKey && selectedTaskKeys.size > 0) {
     clearTaskSelection();
     renderCalendar();
   }
@@ -1258,23 +1276,6 @@ if (ctxCreateGroup) {
       const groupId = st.nextTaskGroupId++;
       const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
       active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, color: '#8ea1ff', taskIds });
-    });
-    clearTaskSelection();
-    setTaskContextMenuOpen(false);
-  });
-}
-
-
-if (ctxCreateGroup) {
-  ctxCreateGroup.addEventListener('click', () => {
-    const picks = getTaskContextSelection();
-    if (picks.length <= 2) return;
-    commit('Создана группа задач календаря', (st) => {
-      const active = getActiveSpace(st);
-      if (!Array.isArray(active.taskGroups)) active.taskGroups = [];
-      const groupId = st.nextTaskGroupId++;
-      const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
-      active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, taskIds });
     });
     clearTaskSelection();
     setTaskContextMenuOpen(false);
