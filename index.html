@@ -36,6 +36,7 @@
     <div class="topbar-actions">
       <button id="themeToggle" type="button">Тёмная тема</button>
       <button id="clearUnpinned" type="button">Очистить незакреплённые</button>
+      <button id="toggleNotesPanel" type="button" aria-expanded="false">Заметки</button>
       <button id="toggleHistory" type="button" aria-expanded="false">История</button>
     </div>
   </header>
@@ -65,6 +66,9 @@
         <h3>Инструкция</h3>
         <ul>
           <li>Выберите задачу в колонке, чтобы открыть её доску внизу.</li>
+          <li>Импорт пространства будет отклонён, если такое пространство уже есть в списке.</li>
+          <li>В календаре можно выделить несколько задач через <strong>Ctrl + ЛКМ</strong> и на <strong>ПКМ</strong> открыть меню.</li>
+          <li>Если выделено две и более задач, в меню появляется кнопка <strong>Создать группу</strong>.</li>
           <li>Выделение заметки: <strong>Ctrl + ЛКМ</strong> по заметке.</li>
           <li>Удаление выделенного: нажмите клавишу <strong>Delete</strong>.</li>
         </ul>
@@ -74,6 +78,17 @@
         <div id="boardCanvas" class="board-canvas"></div>
       </div>
     </section>
+
+
+    <aside id="notesPanel" class="notes-panel">
+      <h2>Боковое меню заметок</h2>
+      <form id="addSideNoteForm" class="add-side-note-form">
+        <textarea name="text" placeholder="Новая заметка" required></textarea>
+        <button type="submit">Добавить заметку</button>
+      </form>
+      <p class="hint">Перетащите заметку в день календаря, чтобы создать задачу.</p>
+      <ul id="sideNotesList" class="side-notes-list"></ul>
+    </aside>
 
     <aside id="historyPanel" class="history-panel">
       <h2>История</h2>
@@ -100,6 +115,7 @@
   <div id="taskContextMenu" class="task-context-menu hidden" role="menu" aria-hidden="true">
     <button id="ctxPin" type="button">Закрепить</button>
     <button id="ctxBackground" type="button">Перенести на фон дня</button>
+    <button id="ctxCreateGroup" class="hidden" type="button">Создать группу</button>
     <label class="ctx-color-wrap">Цвет задачи <input id="ctxColor" type="color" value="#5a6cff" /></label>
     <button id="ctxDelete" type="button">Удалить</button>
   </div>

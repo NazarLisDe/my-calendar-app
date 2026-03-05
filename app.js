@@ -11,7 +11,11 @@ function createSpaceState() {
   return {
     days: Object.fromEntries(DAYS.map((d) => [d, []])),
     dayBackgrounds: Object.fromEntries(DAYS.map((d) => [d, null])),
-    boards: {}
+    dayNotes: Object.fromEntries(DAYS.map((d) => [d, ''])),
+    boards: {},
+    dockTasks: [],
+    taskGroups: [],
+    sideNotes: []
   };
 }
 
@@ -21,6 +25,8 @@ const defaultState = () => ({
   nextTaskId: 1,
   nextCloudId: 1,
   nextGroupId: 1,
+  nextTaskGroupId: 1,
+  nextSideNoteId: 1,
   spaceNames: { ...SPACES },
   spaces: {
     management: createSpaceState(),
@@ -37,13 +43,17 @@ let dragTask = null;
 let dragCloud = null;
 let dragCloudNote = null;
 let dragBackgroundTask = null;
+let dragSideNote = null;
 let selectedCloudIds = new Set();
+let selectedTaskKeys = new Set();
 let isHistoryOpen = false;
 let isInstructionsOpen = false;
 let isSpaceMenuOpen = false;
 let isSpaceActionMenuOpen = false;
 let spaceActionTargetKey = null;
 let isTaskContextMenuOpen = false;
+let isDockMenuOpen = false;
+let isNotesPanelOpen = false;
 let taskContextTarget = null;
 
 function loadState() {
@@ -76,7 +86,11 @@ function loadState() {
         management: {
           days: parsed.days || createSpaceState().days,
           dayBackgrounds: parsed.dayBackgrounds || createSpaceState().dayBackgrounds,
-          boards: parsed.boards || {}
+          dayNotes: parsed.dayNotes || createSpaceState().dayNotes,
+          boards: parsed.boards || {},
+          dockTasks: parsed.dockTasks || [],
+          taskGroups: parsed.taskGroups || [],
+          sideNotes: parsed.sideNotes || []
         },
         notes: createSpaceState()
       }
@@ -110,6 +124,30 @@ function getTaskById(taskId, s = state) {
   if (dockTask) return { task: dockTask, day: null };
 
   return null;
+}
+
+function getTaskSelectionKey(day, taskId) {
+  return `${day}|${taskId}`;
+}
+
+function parseTaskSelectionKey(key) {
+  const [day, taskIdRaw] = key.split('|');
+  return { day, taskId: Number(taskIdRaw) };
+}
+
+function getSelectedTaskRefs() {
+  return [...selectedTaskKeys].map(parseTaskSelectionKey).filter((item) => item.day && Number.isFinite(item.taskId));
+}
+
+function getTaskContextSelection() {
+  const picks = getSelectedTaskRefs();
+  if (picks.length > 0) return picks;
+  if (!taskContextTarget) return [];
+  return [{ day: taskContextTarget.day, taskId: taskContextTarget.taskId }];
+}
+
+function clearTaskSelection() {
+  selectedTaskKeys = new Set();
 }
 
 function ensureBoard(st, taskId) {
@@ -158,6 +196,23 @@ function setInstructionsOpen(open) {
   panel.setAttribute('aria-hidden', String(!open));
   toggle.setAttribute('aria-expanded', String(open));
   toggle.textContent = open ? 'Скрыть инструкцию' : 'Инструкция';
+}
+
+function setDockMenuOpen(open) {
+  isDockMenuOpen = open;
+  const dock = document.getElementById('taskDock');
+  const toggle = document.getElementById('toggleDockMenu');
+  if (dock) dock.classList.toggle('hidden', !open);
+  if (toggle) toggle.setAttribute('aria-expanded', String(open));
+}
+
+function setNotesPanelOpen(open) {
+  isNotesPanelOpen = open;
+  const panel = document.getElementById('notesPanel');
+  const toggle = document.getElementById('toggleNotesPanel');
+  if (!panel || !toggle) return;
+  panel.classList.toggle('open', open);
+  toggle.setAttribute('aria-expanded', String(open));
 }
 
 function setSpaceMenuOpen(open) {
@@ -234,7 +289,8 @@ function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, pl
     title: extractTaskTitleFromCloudText(cloud.text),
     color: null,
     pinned: false,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    taskGroupId: null
   };
 
   const destination = active.days[toDay];
@@ -251,6 +307,37 @@ function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, pl
 
   const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
   destination.splice(insertIdx, 0, taskFromCloud);
+}
+
+function moveSideNoteToDay(st, noteId, toDay, targetTaskId = null, placeAfter = false) {
+  const active = getActiveSpace(st);
+  const noteIdx = active.sideNotes.findIndex((n) => n.id === noteId);
+  if (noteIdx < 0) return;
+
+  const [note] = active.sideNotes.splice(noteIdx, 1);
+  const task = {
+    id: st.nextTaskId++,
+    title: extractTaskTitleFromCloudText(note.text),
+    color: null,
+    pinned: false,
+    createdAt: Date.now(),
+    taskGroupId: null
+  };
+
+  const destination = active.days[toDay];
+  if (targetTaskId === null) {
+    destination.push(task);
+    return;
+  }
+
+  const targetIdx = destination.findIndex((t) => t.id === targetTaskId);
+  if (targetIdx < 0) {
+    destination.push(task);
+    return;
+  }
+
+  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
+  destination.splice(insertIdx, 0, task);
 }
 
 function enableInlineTaskTitleEdit(node, task, day) {
@@ -333,12 +420,20 @@ function setTaskContextMenuOpen(open, x = 0, y = 0) {
 }
 
 function openTaskContextMenu(x, y, day, task) {
+  const key = getTaskSelectionKey(day, task.id);
+  if (!selectedTaskKeys.has(key)) {
+    selectedTaskKeys = new Set([key]);
+  }
   taskContextTarget = { day, taskId: task.id };
+  const selection = getTaskContextSelection();
   const pinBtn = document.getElementById('ctxPin');
   const colorInput = document.getElementById('ctxColor');
+  const groupBtn = document.getElementById('ctxCreateGroup');
   if (pinBtn) pinBtn.textContent = task.pinned ? 'Открепить' : 'Закрепить';
   if (colorInput) colorInput.value = task.color || '#5a6cff';
+  if (groupBtn) groupBtn.classList.toggle('hidden', selection.length < 2);
   setTaskContextMenuOpen(true, x, y);
+  renderCalendar();
 }
 
 function setSpaceActionMenuOpen(open, x = 0, y = 0) {
@@ -366,7 +461,11 @@ function normalizeImportedSpaceData(raw) {
   return {
     days: { ...base.days, ...(raw.days || {}) },
     dayBackgrounds: { ...base.dayBackgrounds, ...(raw.dayBackgrounds || {}) },
-    boards: { ...base.boards, ...(raw.boards || {}) }
+    dayNotes: { ...base.dayNotes, ...(raw.dayNotes || {}) },
+    boards: { ...base.boards, ...(raw.boards || {}) },
+    dockTasks: Array.isArray(raw.dockTasks) ? raw.dockTasks : [],
+    taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : [],
+    sideNotes: Array.isArray(raw.sideNotes) ? raw.sideNotes : []
   };
 }
 
@@ -382,13 +481,67 @@ function downloadJson(filename, payload) {
   URL.revokeObjectURL(url);
 }
 
+function buildTaskNode(task, day, handleDayDrop) {
+  const tpl = document.getElementById('taskTemplate');
+  const node = tpl.content.firstElementChild.cloneNode(true);
+  if (task.pinned) node.classList.add('pinned');
+  if (selectedTaskKeys.has(getTaskSelectionKey(day, task.id))) node.classList.add('selected');
+  node.querySelector('.open-board').textContent = task.title;
+  node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
+  enableInlineTaskTitleEdit(node, task, day);
+
+  if (task.color) {
+    node.style.setProperty('--task-color', task.color);
+  }
+
+  node.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (!e.ctrlKey) return;
+    if (e.target.closest('button, input, textarea')) return;
+    e.preventDefault();
+    const key = getTaskSelectionKey(day, task.id);
+    if (selectedTaskKeys.has(key)) {
+      selectedTaskKeys.delete(key);
+    } else {
+      selectedTaskKeys.add(key);
+    }
+    renderCalendar();
+  });
+
+  node.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const key = getTaskSelectionKey(day, task.id);
+    if (!selectedTaskKeys.has(key)) selectedTaskKeys = new Set([key]);
+    openTaskContextMenu(e.clientX, e.clientY, day, task);
+  });
+
+  node.addEventListener('dragstart', (e) => {
+    if (e.target.closest('.to-background')) return;
+    dragTask = { fromDay: day, taskId: task.id };
+  });
+
+  node.addEventListener('dragover', (e) => e.preventDefault());
+  node.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const rect = node.getBoundingClientRect();
+    const placeAfter = e.clientY > rect.top + rect.height / 2;
+    handleDayDrop(task.id, placeAfter);
+  });
+
+  return node;
+}
+
 function renderCalendar() {
   const s = effectiveState();
   const grid = document.getElementById('calendarGrid');
   const space = getActiveSpace(s);
+  const taskGroups = Array.isArray(space.taskGroups) ? space.taskGroups : [];
   grid.innerHTML = '';
 
   DAYS.forEach((day) => {
+    const cell = document.createElement('div');
+    cell.className = 'day-cell';
+    cell.dataset.day = day;
     const col = document.createElement('div');
     col.className = 'day-column';
     col.dataset.day = day;
@@ -401,13 +554,27 @@ function renderCalendar() {
         <input name="title" placeholder="Новая задача" required />
         <button type="submit">+</button>
       </form>
-      <ul class="tasks"></ul>
+      <div class="tasks-area">
+        <div class="task-groups"></div>
+        <ul class="tasks"></ul>
+      </div>
     `;
 
     const bgLabel = col.querySelector('.day-background-label');
     if (bgLabel && dayBackgroundTitle) {
       bgLabel.textContent = buildDayBackgroundPattern(dayBackgroundTitle);
     }
+
+    const notes = document.createElement('textarea');
+    notes.className = 'day-notes';
+    notes.placeholder = 'Текстовое поле под блоком дня';
+    notes.value = space.dayNotes?.[day] || '';
+    notes.addEventListener('change', (e) => {
+      const nextValue = e.target.value;
+      commit(`Обновлён текст под задачами для дня «${day}»`, (st) => {
+        getActiveSpace(st).dayNotes[day] = nextValue;
+      });
+    });
 
     const handleDayDrop = (targetTaskId = null, placeAfter = false) => {
       if (dragBackgroundTask) {
@@ -435,6 +602,15 @@ function renderCalendar() {
         return true;
       }
 
+      if (dragSideNote) {
+        const { noteId } = dragSideNote;
+        commit(`Заметка бокового меню перенесена в день «${day}»`, (st) => {
+          moveSideNoteToDay(st, noteId, day, targetTaskId, placeAfter);
+        });
+        dragSideNote = null;
+        return true;
+      }
+
       if (!dragTask) return false;
       const { fromDay, taskId } = dragTask;
       if (targetTaskId === null) {
@@ -455,7 +631,7 @@ function renderCalendar() {
       const title = input.value.trim();
       if (!title) return;
       commit(`Добавлена задача «${title}»`, (st) => {
-        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, color: null, pinned: false, createdAt: Date.now() });
+        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, color: null, pinned: false, createdAt: Date.now(), taskGroupId: null });
       });
     });
 
@@ -467,8 +643,9 @@ function renderCalendar() {
     });
 
     const list = col.querySelector('.tasks');
+    const groupsWrap = col.querySelector('.task-groups');
     col.addEventListener('dragover', (e) => {
-      if (dragTask || dragCloudNote || dragBackgroundTask) e.preventDefault();
+      if (dragTask || dragCloudNote || dragBackgroundTask || dragSideNote) e.preventDefault();
     });
     col.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -481,40 +658,64 @@ function renderCalendar() {
       handleDayDrop();
     });
 
-    space.days[day].forEach((task) => {
-      const tpl = document.getElementById('taskTemplate');
-      const node = tpl.content.firstElementChild.cloneNode(true);
-      if (task.pinned) node.classList.add('pinned');
-      node.querySelector('.open-board').textContent = task.title;
-      node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
-      enableInlineTaskTitleEdit(node, task, day);
+    const dayTasks = space.days[day];
+    const groupedTaskIds = new Set(taskGroups.flatMap((group) => group.taskIds || []));
+    const groupsForDay = taskGroups.filter((group) => (group.taskIds || []).some((id) => dayTasks.some((task) => task.id === id)));
 
-      if (task.color) {
-        node.style.setProperty('--task-color', task.color);
-      }
+    groupsForDay.forEach((group) => {
+      const groupTasks = dayTasks.filter((task) => (group.taskIds || []).includes(task.id));
+      if (groupTasks.length === 0) return;
+      const groupEl = document.createElement('section');
+      groupEl.className = 'task-group-column';
+      const groupColor = group.color || '#8ea1ff';
+      groupEl.style.setProperty('--group-color', groupColor);
+      groupEl.innerHTML = `
+        <div class="task-group-header">
+          <h4>${group.name || 'Группа'}</h4>
+          <div class="task-group-controls">
+            <input class="group-color-input" type="color" value="${groupColor}" title="Цвет группы" />
+            <button class="group-rename" type="button" title="Изменить название группы">✎</button>
+          </div>
+        </div>
+        <ul class="tasks"></ul>
+      `;
+      const groupList = groupEl.querySelector('.tasks');
+      groupTasks.forEach((task) => groupList.append(buildTaskNode(task, day, handleDayDrop)));
 
-      node.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        openTaskContextMenu(e.clientX, e.clientY, day, task);
+      const colorInput = groupEl.querySelector('.group-color-input');
+      colorInput.addEventListener('change', (e) => {
+        const nextColor = e.target.value;
+        commit('Изменён цвет группы задач', (st) => {
+          const active = getActiveSpace(st);
+          const targetGroup = (active.taskGroups || []).find((item) => item.id === group.id);
+          if (targetGroup) targetGroup.color = nextColor;
+        });
       });
 
-      node.addEventListener('dragstart', (e) => {
-        if (e.target.closest('.to-background')) return;
-        dragTask = { fromDay: day, taskId: task.id };
+      const renameBtn = groupEl.querySelector('.group-rename');
+      renameBtn.addEventListener('click', () => {
+        const nextName = prompt('Название группы', group.name || '');
+        if (nextName === null) return;
+        const cleanName = nextName.trim();
+        if (!cleanName) return;
+        commit('Изменено название группы задач', (st) => {
+          const active = getActiveSpace(st);
+          const targetGroup = (active.taskGroups || []).find((item) => item.id === group.id);
+          if (targetGroup) targetGroup.name = cleanName;
+        });
       });
 
-      node.addEventListener('dragover', (e) => e.preventDefault());
-      node.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const rect = node.getBoundingClientRect();
-        const placeAfter = e.clientY > rect.top + rect.height / 2;
-        handleDayDrop(task.id, placeAfter);
-      });
-
-      list.append(node);
+      groupsWrap.append(groupEl);
     });
 
-    grid.append(col);
+    dayTasks
+      .filter((task) => !groupedTaskIds.has(task.id))
+      .forEach((task) => {
+        list.append(buildTaskNode(task, day, handleDayDrop));
+      });
+
+    cell.append(col, notes);
+    grid.append(cell);
   });
 
   renderSpaceOptions(s);
@@ -767,10 +968,67 @@ document.addEventListener('mouseup', () => {
   dragCloud = null;
 });
 
+function renderSideNotes(st = effectiveState()) {
+  const list = document.getElementById('sideNotesList');
+  if (!list) return;
+  const space = getActiveSpace(st);
+  list.innerHTML = '';
+
+  if (!Array.isArray(space.sideNotes) || space.sideNotes.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'side-note-empty';
+    empty.textContent = 'Пока нет заметок. Добавьте заметку и перетащите её в день.';
+    list.append(empty);
+    return;
+  }
+
+  space.sideNotes.forEach((note) => {
+    const li = document.createElement('li');
+    li.className = 'side-note-item';
+    li.innerHTML = `
+      <textarea>${note.text || ''}</textarea>
+      <div class="side-note-actions">
+        <button type="button" class="side-note-drag" draggable="true">Перенести в день</button>
+        <button type="button" class="side-note-delete">Удалить</button>
+      </div>
+    `;
+
+    const area = li.querySelector('textarea');
+    area.addEventListener('change', (e) => {
+      commit('Изменён текст заметки бокового меню', (stateDraft) => {
+        const target = getActiveSpace(stateDraft).sideNotes.find((x) => x.id === note.id);
+        if (target) target.text = e.target.value;
+      });
+    });
+
+    const dragBtn = li.querySelector('.side-note-drag');
+    dragBtn.addEventListener('dragstart', (e) => {
+      dragSideNote = { noteId: note.id };
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', note.text || '');
+      }
+    });
+    dragBtn.addEventListener('dragend', () => {
+      dragSideNote = null;
+    });
+
+    li.querySelector('.side-note-delete').addEventListener('click', () => {
+      commit('Удалена заметка бокового меню', (stateDraft) => {
+        const active = getActiveSpace(stateDraft);
+        active.sideNotes = active.sideNotes.filter((x) => x.id !== note.id);
+      });
+    });
+
+    list.append(li);
+  });
+}
+
 function renderAll() {
   renderCalendar();
   renderHistory();
   renderBoard();
+  renderSideNotes();
 }
 
 document.getElementById('spaceMenuToggle').addEventListener('click', () => {
@@ -841,14 +1099,24 @@ if (spaceMenuElement) {
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.space-menu-wrap')) setSpaceMenuOpen(false);
+  if (isNotesPanelOpen && !e.target.closest('#notesPanel') && !e.target.closest('#toggleNotesPanel')) setNotesPanelOpen(false);
   if (isSpaceActionMenuOpen && !e.target.closest('#spaceActionMenu') && !e.target.closest('.space-option')) setSpaceActionMenuOpen(false);
   if (isTaskContextMenuOpen && !e.target.closest('#taskContextMenu') && !e.target.closest('.task')) setTaskContextMenuOpen(false);
+  if (!e.target.closest('.task') && !e.ctrlKey && selectedTaskKeys.size > 0) {
+    clearTaskSelection();
+    renderCalendar();
+  }
 });
 
 document.getElementById('themeToggle').addEventListener('click', () => {
   commit('Смена темы', (st) => {
     st.theme = st.theme === 'dark' ? 'light' : 'dark';
   });
+});
+
+document.getElementById('toggleNotesPanel').addEventListener('click', () => {
+  setNotesPanelOpen(!isNotesPanelOpen);
+  if (isNotesPanelOpen) setHistoryOpen(false);
 });
 
 document.getElementById('toggleHistory').addEventListener('click', () => {
@@ -868,6 +1136,7 @@ document.addEventListener('keydown', (e) => {
     if (isSpaceMenuOpen) setSpaceMenuOpen(false);
     if (isSpaceActionMenuOpen) setSpaceActionMenuOpen(false);
     if (isTaskContextMenuOpen) setTaskContextMenuOpen(false);
+    if (isNotesPanelOpen) setNotesPanelOpen(false);
   }
 });
 
@@ -931,6 +1200,20 @@ if (dockTaskForm) {
   }
 }
 
+const addSideNoteForm = document.getElementById('addSideNoteForm');
+if (addSideNoteForm) {
+  addSideNoteForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = addSideNoteForm.text.value.trim();
+    if (!text) return;
+    commit('Добавлена заметка в боковое меню', (st) => {
+      const active = getActiveSpace(st);
+      active.sideNotes.push({ id: st.nextSideNoteId++, text, createdAt: Date.now() });
+    });
+    addSideNoteForm.reset();
+  });
+}
+
 document.getElementById('backToCalendar').addEventListener('click', () => {
   currentBoardTaskId = null;
   selectedCloudIds = new Set();
@@ -988,17 +1271,30 @@ if (spaceActionDelete) {
   spaceActionDelete.addEventListener('click', () => {
     if (!spaceActionTargetKey) return;
     const target = spaceActionTargetKey;
+    if (!(target in state.spaces)) {
+      setSpaceActionMenuOpen(false);
+      return;
+    }
+
     const isCore = target === 'management' || target === 'notes';
     commit(isCore ? `Очищено пространство «${getSpaceLabel(target, state)}»` : `Удалено пространство «${getSpaceLabel(target, state)}»`, (st) => {
+      if (!st.spaceNames) st.spaceNames = { ...SPACES };
+
       if (isCore) {
         st.spaces[target] = createSpaceState();
       } else {
         delete st.spaces[target];
         delete st.spaceNames[target];
       }
-      if (st.activeSpace === target) {
+
+      if (Object.keys(st.spaces).length === 0) {
+        st.spaces.management = createSpaceState();
+      }
+
+      if (!(st.activeSpace in st.spaces)) {
         st.activeSpace = st.spaces.management ? 'management' : Object.keys(st.spaces)[0];
       }
+
       currentBoardTaskId = null;
     });
     setSpaceActionMenuOpen(false);
@@ -1025,6 +1321,12 @@ if (importSpaceBtn && importSpaceInput) {
     const target = typeof parsed.spaceKey === 'string' && parsed.spaceKey.trim() ? parsed.spaceKey.trim() : fallbackKey;
     const label = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : (SPACES[target] || target);
 
+    if (target in state.spaces) {
+      alert('Импортированное пространство не будет импортировано, если оно уже существует в списке.');
+      importSpaceInput.value = '';
+      return;
+    }
+
     commit(`Импортировано пространство в «${label}»`, (st) => {
       if (!st.spaceNames) st.spaceNames = { ...SPACES };
       st.spaceNames[target] = label;
@@ -1038,15 +1340,20 @@ const ctxPin = document.getElementById('ctxPin');
 const ctxBackground = document.getElementById('ctxBackground');
 const ctxDelete = document.getElementById('ctxDelete');
 const ctxColor = document.getElementById('ctxColor');
+const ctxCreateGroup = document.getElementById('ctxCreateGroup');
 
 if (ctxPin) {
   ctxPin.addEventListener('click', () => {
-    if (!taskContextTarget) return;
-    const { day, taskId } = taskContextTarget;
+    const picks = getTaskContextSelection();
+    if (picks.length === 0) return;
     commit('Изменён статус закрепления', (st) => {
-      const t = getActiveSpace(st).days[day].find((x) => x.id === taskId);
-      if (t) t.pinned = !t.pinned;
+      const active = getActiveSpace(st);
+      picks.forEach(({ day, taskId }) => {
+        const t = active.days[day].find((x) => x.id === taskId);
+        if (t) t.pinned = !t.pinned;
+      });
     });
+    clearTaskSelection();
     setTaskContextMenuOpen(false);
   });
 }
@@ -1065,34 +1372,61 @@ if (ctxBackground) {
       delete active.boards[task.id];
       if (currentBoardTaskId === task.id) currentBoardTaskId = null;
     });
+    clearTaskSelection();
     setTaskContextMenuOpen(false);
   });
 }
 
 if (ctxDelete) {
   ctxDelete.addEventListener('click', () => {
-    if (!taskContextTarget) return;
-    const { day, taskId } = taskContextTarget;
+    const picks = getTaskContextSelection();
+    if (picks.length === 0) return;
     commit('Удалена задача через меню', (st) => {
       const active = getActiveSpace(st);
-      active.days[day] = active.days[day].filter((t) => t.id !== taskId);
-      delete active.boards[taskId];
-      if (currentBoardTaskId === taskId) currentBoardTaskId = null;
+      picks.forEach(({ day, taskId }) => {
+        active.days[day] = active.days[day].filter((t) => t.id !== taskId);
+        delete active.boards[taskId];
+        if (currentBoardTaskId === taskId) currentBoardTaskId = null;
+      });
+      active.taskGroups = (active.taskGroups || []).map((group) => ({
+        ...group,
+        taskIds: (group.taskIds || []).filter((id) => !picks.some((pick) => pick.taskId === id))
+      })).filter((group) => group.taskIds.length > 1);
     });
+    clearTaskSelection();
     setTaskContextMenuOpen(false);
   });
 }
 
 if (ctxColor) {
   ctxColor.addEventListener('change', (e) => {
-    if (!taskContextTarget) return;
-    const { day, taskId } = taskContextTarget;
+    const picks = getTaskContextSelection();
+    if (picks.length === 0) return;
     const nextColor = e.target.value;
     commit('Изменён цвет задачи через меню', (st) => {
-      const t = getActiveSpace(st).days[day].find((x) => x.id === taskId);
-      if (!t) return;
-      t.color = nextColor;
+      const active = getActiveSpace(st);
+      picks.forEach(({ day, taskId }) => {
+        const t = active.days[day].find((x) => x.id === taskId);
+        if (t) t.color = nextColor;
+      });
     });
+  });
+}
+
+
+if (ctxCreateGroup) {
+  ctxCreateGroup.addEventListener('click', () => {
+    const picks = getTaskContextSelection();
+    if (picks.length < 2) return;
+    commit('Создана группа задач календаря', (st) => {
+      const active = getActiveSpace(st);
+      if (!Array.isArray(active.taskGroups)) active.taskGroups = [];
+      const groupId = st.nextTaskGroupId++;
+      const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
+      active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, color: '#8ea1ff', taskIds });
+    });
+    clearTaskSelection();
+    setTaskContextMenuOpen(false);
   });
 }
 
@@ -1177,4 +1511,5 @@ setHistoryOpen(false);
 setInstructionsOpen(false);
 setSpaceMenuOpen(false);
 setDockMenuOpen(false);
+setNotesPanelOpen(false);
 renderAll();
