@@ -13,6 +13,9 @@ const TELEGRAM_TARGET = {
   board: 'board'
 };
 
+const TELEGRAM_REQUEST_TIMEOUT_MS = 12000;
+const TELEGRAM_RETRY_COUNT = 1;
+
 const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL;
 const SUPABASE_ANON_KEY = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
 
@@ -40,14 +43,67 @@ function withTelegramTarget(text = '', target = TELEGRAM_TARGET.notes) {
   return `${marker} ${clean}`.trim();
 }
 
+function normalizeTelegramError(error, fallbackMessage) {
+  const message = error?.message || String(error || fallbackMessage);
+  if (/failed to fetch|networkerror|network request failed|load failed|abort/i.test(message)) {
+    return new Error('Не удалось подключиться к Supabase. Проверьте интернет, CORS в Supabase и правильность SUPABASE_URL / SUPABASE_ANON_KEY.');
+  }
+  return new Error(message || fallbackMessage);
+}
+
+async function runTelegramSupabaseRequest(buildRequest, fallbackMessage) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= TELEGRAM_RETRY_COUNT; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TELEGRAM_REQUEST_TIMEOUT_MS);
+
+    try {
+      const { data, error } = await buildRequest(controller.signal);
+      clearTimeout(timeoutId);
+
+      if (error) {
+        lastError = normalizeTelegramError(error, fallbackMessage);
+        if (attempt < TELEGRAM_RETRY_COUNT) continue;
+        return { data: null, error: lastError };
+      }
+
+      return { data, error: null };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      lastError = normalizeTelegramError(error, fallbackMessage);
+      if (attempt < TELEGRAM_RETRY_COUNT) continue;
+      return { data: null, error: lastError };
+    }
+  }
+
+  return { data: null, error: lastError || new Error(fallbackMessage) };
+}
+
 async function updateTelegramTask(taskId, updates) {
   if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
-  return supabaseClient.from('tasks').update(updates).eq('id', taskId);
+
+  return runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from('tasks')
+      .update(updates)
+      .eq('id', taskId)
+      .abortSignal(signal),
+    'Ошибка обновления задачи в Supabase.'
+  );
 }
 
 async function deleteTelegramTask(taskId) {
   if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
-  return supabaseClient.from('tasks').delete().eq('id', taskId);
+
+  return runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from('tasks')
+      .delete()
+      .eq('id', taskId)
+      .abortSignal(signal),
+    'Ошибка удаления задачи из Supabase.'
+  );
 }
 
 async function loadTelegramTasks() {
@@ -66,10 +122,14 @@ async function loadTelegramTasks() {
 
   list.innerHTML = '<li>Загрузка задач...</li>';
 
-  const { data, error } = await supabaseClient
-    .from('tasks')
-    .select('id, text, is_completed, created_at')
-    .order('created_at', { ascending: false });
+  const { data, error } = await runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from('tasks')
+      .select('id, text, is_completed, created_at')
+      .order('created_at', { ascending: false })
+      .abortSignal(signal),
+    'Ошибка загрузки задач из Supabase.'
+  );
 
   if (error) {
     list.innerHTML = `<li>Ошибка загрузки: ${error.message}</li>`;
