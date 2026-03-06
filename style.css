@@ -789,3 +789,19 @@ main {
   padding: 4px 8px;
   cursor: pointer;
 }
+
+.telegram-transfer-menu {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.telegram-transfer-menu button {
+  border: 1px dashed var(--line, #d8dbe7);
+  background: transparent;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 0.82rem;
+}

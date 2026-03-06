@@ -51,6 +51,38 @@ function normalizeTelegramError(error, fallbackMessage) {
   return new Error(message || fallbackMessage);
 }
 
+function escapeHtml(value = '') {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function getBoardTransferTargets() {
+  const active = getActiveSpace(effectiveState());
+  const targets = [];
+
+  DAYS.forEach((day) => {
+    active.days[day].forEach((task) => {
+      targets.push({
+        taskId: task.id,
+        label: `${day}: ${task.title || 'Без названия'}`
+      });
+    });
+  });
+
+  active.dockTasks.forEach((task) => {
+    targets.push({
+      taskId: task.id,
+      label: `Поле доски: ${task.title || 'Без названия'}`
+    });
+  });
+
+  return targets;
+}
+
 async function runTelegramSupabaseRequest(buildRequest, fallbackMessage) {
   let lastError = null;
 
@@ -155,7 +187,7 @@ async function loadTelegramTasks() {
 
     li.innerHTML = `
       <div class="telegram-task-row">
-        <span class="telegram-task-title">${status} ${text}</span>
+        <span class="telegram-task-title">${status} ${escapeHtml(text)}</span>
         <small class="telegram-task-target">${targetLabel}</small>
       </div>
       <div class="telegram-task-actions">
@@ -164,11 +196,24 @@ async function loadTelegramTasks() {
         <button type="button" data-action="to-board">На доску</button>
         <button type="button" data-action="delete">Удалить</button>
       </div>
+      <div class="telegram-transfer-menu hidden" data-menu="day"></div>
+      <div class="telegram-transfer-menu hidden" data-menu="board"></div>
     `;
+
+    const dayMenu = li.querySelector('[data-menu="day"]');
+    const boardMenu = li.querySelector('[data-menu="board"]');
+
+    dayMenu.innerHTML = DAYS.map((day) => `<button type="button" data-day="${day}">${day}</button>`).join('');
+
+    const closeMenus = () => {
+      dayMenu.classList.add('hidden');
+      boardMenu.classList.add('hidden');
+    };
 
     li.addEventListener('click', async (event) => {
       const action = event.target?.dataset?.action;
-      if (!action) return;
+      const day = event.target?.dataset?.day;
+      const boardTaskIdRaw = event.target?.dataset?.boardTaskId;
 
       if (action === 'edit') {
         const nextText = prompt('Новый текст задачи', text);
@@ -197,14 +242,31 @@ async function loadTelegramTasks() {
       }
 
       if (action === 'to-day') {
-        const pickedDay = prompt(`Выберите день:
-${DAYS.join(', ')}`, DAYS[0]);
-        if (!pickedDay) return;
-        const day = DAYS.find((item) => item.toLowerCase() === pickedDay.trim().toLowerCase());
-        if (!day) {
-          alert('Неверный день.');
+        const shouldOpen = dayMenu.classList.contains('hidden');
+        closeMenus();
+        if (shouldOpen) dayMenu.classList.remove('hidden');
+        return;
+      }
+
+      if (action === 'to-board') {
+        const targets = getBoardTransferTargets();
+        if (targets.length === 0) {
+          alert('Нет доступных досок. Сначала создайте хотя бы одну задачу в календаре или в поле доски.');
           return;
         }
+
+        boardMenu.innerHTML = targets
+          .map((item) => `<button type="button" data-board-task-id="${item.taskId}">${escapeHtml(item.label)}</button>`)
+          .join('');
+
+        const shouldOpen = boardMenu.classList.contains('hidden');
+        closeMenus();
+        if (shouldOpen) boardMenu.classList.remove('hidden');
+        return;
+      }
+
+      if (day) {
+        closeMenus();
 
         commit(`Telegram-задача перенесена в день «${day}»`, (st) => {
           getActiveSpace(st).days[day].push({
@@ -223,16 +285,32 @@ ${DAYS.join(', ')}`, DAYS[0]);
         return;
       }
 
-      if (action === 'to-board') {
-        commit('Telegram-задача перенесена в поле доски', (st) => {
-          getActiveSpace(st).dockTasks.push({
-            id: st.nextTaskId++,
-            title: text,
-            tags: [],
-            pinned: false,
+      if (boardTaskIdRaw) {
+        closeMenus();
+
+        const boardTaskId = Number(boardTaskIdRaw);
+        if (!Number.isInteger(boardTaskId)) {
+          alert('Некорректная доска.');
+          return;
+        }
+
+        commit('Telegram-задача перенесена на выбранную доску', (st) => {
+          const board = ensureBoard(st, boardTaskId);
+          board.clouds.push({
+            id: st.nextCloudId++,
+            text,
+            x: 80,
+            y: 80,
+            width: 220,
+            height: 140,
+            groupId: null,
             createdAt: Date.now()
           });
         });
+
+        currentBoardTaskId = boardTaskId;
+        selectedCloudIds = new Set();
+        renderBoard();
 
         const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.board) });
         if (mvErr) alert(`Задача добавлена на доску, но не обновлён тип в Supabase: ${mvErr.message}`);
