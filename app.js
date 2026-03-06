@@ -7,6 +7,45 @@ const SPACES = {
 const STORAGE_KEY = 'calendar-board-state-v2';
 const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
 
+const SUPABASE_URL = 'https://mexvcooxruzxrntvhzmc.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_tdIF-2iq8Dx-V5VJx_ATpg_LoeNqQAx';
+const supabaseClient = window.supabase
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+async function loadTelegramTasks() {
+  const list = document.getElementById('telegramTasksList');
+  if (!list) return;
+
+  if (!supabaseClient) {
+    list.innerHTML = '<li>Supabase SDK не загружен.</li>';
+    return;
+  }
+
+  list.innerHTML = '<li>Загрузка задач...</li>';
+
+  const { data, error } = await supabaseClient
+    .from('tasks')
+    .select('id, text, is_completed, created_at')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    list.innerHTML = `<li>Ошибка загрузки: ${error.message}</li>`;
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    list.innerHTML = '<li>Пока нет задач из Telegram.</li>';
+    return;
+  }
+
+  list.innerHTML = data.map((task) => {
+    const status = task.is_completed ? '✅' : '⬜️';
+    return `<li data-task-id="${task.id}">${status} ${task.text}</li>`;
+  }).join('');
+}
+
+
 function createSpaceState() {
   return {
     days: Object.fromEntries(DAYS.map((d) => [d, []])),
@@ -1640,3 +1679,4 @@ setSpaceMenuOpen(false);
 setDockMenuOpen(false);
 setNotesPanelOpen(false);
 renderAll();
+loadTelegramTasks();
