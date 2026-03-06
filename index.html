@@ -85,6 +85,11 @@
         <textarea name="text" placeholder="Новая заметка" required></textarea>
         <button type="submit">Добавить заметку</button>
       </form>
+      <section class="telegram-tasks-panel">
+        <h3>Задачи из Telegram</h3>
+        <p class="hint">Можно редактировать, переносить в день/доску и удалять прямо отсюда.</p>
+        <ul id="telegramTasksList" class="side-notes-list"></ul>
+      </section>
       <p class="hint">Перетащите заметку в день календаря, чтобы создать задачу.</p>
       <ul id="sideNotesList" class="side-notes-list"></ul>
     </aside>
@@ -119,6 +124,13 @@
     <button id="ctxDelete" type="button">Удалить</button>
   </div>
 
+  <script>
+    window.CALENDAR_CONFIG = window.CALENDAR_CONFIG || {
+      SUPABASE_URL: 'https://mexvcooxruzxrntvhzmc.supabase.co',
+      SUPABASE_ANON_KEY: 'sb_publishable_tdIF-2iq8Dx-V5VJx_ATpg_LoeNqQAx'
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>
