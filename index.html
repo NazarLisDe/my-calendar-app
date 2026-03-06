@@ -87,6 +87,7 @@
       </form>
       <section class="telegram-tasks-panel">
         <h3>Задачи из Telegram</h3>
+        <p class="hint">Можно редактировать, переносить в день/доску и удалять прямо отсюда.</p>
         <ul id="telegramTasksList" class="side-notes-list"></ul>
       </section>
       <p class="hint">Перетащите заметку в день календаря, чтобы создать задачу.</p>
@@ -123,6 +124,12 @@
     <button id="ctxDelete" type="button">Удалить</button>
   </div>
 
+  <script>
+    window.CALENDAR_CONFIG = window.CALENDAR_CONFIG || {
+      SUPABASE_URL: null,
+      SUPABASE_ANON_KEY: null
+    };
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>

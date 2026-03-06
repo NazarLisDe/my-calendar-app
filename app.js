@@ -7,18 +7,60 @@ const SPACES = {
 const STORAGE_KEY = 'calendar-board-state-v2';
 const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
 
-const SUPABASE_URL = 'https://mexvcooxruzxrntvhzmc.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_tdIF-2iq8Dx-V5VJx_ATpg_LoeNqQAx';
-const supabaseClient = window.supabase
+const TELEGRAM_TARGET = {
+  notes: 'notes',
+  day: 'day',
+  board: 'board'
+};
+
+const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL;
+const SUPABASE_ANON_KEY = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
+
+const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
+
+function stripTelegramTargetMarker(text = '') {
+  return text.replace(/^\[(?:NOTES|DAY|BOARD)\]\s*/i, '').trim();
+}
+
+function detectTelegramTarget(text = '') {
+  if (/^\[DAY\]/i.test(text)) return TELEGRAM_TARGET.day;
+  if (/^\[BOARD\]/i.test(text)) return TELEGRAM_TARGET.board;
+  return TELEGRAM_TARGET.notes;
+}
+
+function withTelegramTarget(text = '', target = TELEGRAM_TARGET.notes) {
+  const clean = stripTelegramTargetMarker(text);
+  const marker = target === TELEGRAM_TARGET.day
+    ? '[DAY]'
+    : target === TELEGRAM_TARGET.board
+      ? '[BOARD]'
+      : '[NOTES]';
+  return `${marker} ${clean}`.trim();
+}
+
+async function updateTelegramTask(taskId, updates) {
+  if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
+  return supabaseClient.from('tasks').update(updates).eq('id', taskId);
+}
+
+async function deleteTelegramTask(taskId) {
+  if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
+  return supabaseClient.from('tasks').delete().eq('id', taskId);
+}
 
 async function loadTelegramTasks() {
   const list = document.getElementById('telegramTasksList');
   if (!list) return;
 
-  if (!supabaseClient) {
+  if (!window.supabase) {
     list.innerHTML = '<li>Supabase SDK не загружен.</li>';
+    return;
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    list.innerHTML = '<li>Добавьте SUPABASE_URL и SUPABASE_ANON_KEY в window.CALENDAR_CONFIG.</li>';
     return;
   }
 
@@ -39,12 +81,108 @@ async function loadTelegramTasks() {
     return;
   }
 
-  list.innerHTML = data.map((task) => {
-    const status = task.is_completed ? '✅' : '⬜️';
-    return `<li data-task-id="${task.id}">${status} ${task.text}</li>`;
-  }).join('');
-}
+  list.innerHTML = '';
 
+  data.forEach((task) => {
+    const li = document.createElement('li');
+    li.className = 'telegram-task-item';
+    li.dataset.taskId = String(task.id);
+
+    const text = stripTelegramTargetMarker(task.text || '');
+    const target = detectTelegramTarget(task.text || '');
+    const targetLabel = target === TELEGRAM_TARGET.day ? 'день' : target === TELEGRAM_TARGET.board ? 'доска' : 'заметки';
+    const status = task.is_completed ? '✅' : '⬜️';
+
+    li.innerHTML = `
+      <div class="telegram-task-row">
+        <span class="telegram-task-title">${status} ${text}</span>
+        <small class="telegram-task-target">${targetLabel}</small>
+      </div>
+      <div class="telegram-task-actions">
+        <button type="button" data-action="edit">Ред.</button>
+        <button type="button" data-action="to-day">В день</button>
+        <button type="button" data-action="to-board">На доску</button>
+        <button type="button" data-action="delete">Удалить</button>
+      </div>
+    `;
+
+    li.addEventListener('click', async (event) => {
+      const action = event.target?.dataset?.action;
+      if (!action) return;
+
+      if (action === 'edit') {
+        const nextText = prompt('Новый текст задачи', text);
+        if (nextText === null) return;
+        const clean = nextText.trim();
+        if (!clean) return;
+
+        const { error: updErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(clean, target) });
+        if (updErr) {
+          alert(`Ошибка редактирования: ${updErr.message}`);
+          return;
+        }
+        await loadTelegramTasks();
+        return;
+      }
+
+      if (action === 'delete') {
+        if (!confirm('Удалить задачу из Telegram списка?')) return;
+        const { error: delErr } = await deleteTelegramTask(task.id);
+        if (delErr) {
+          alert(`Ошибка удаления: ${delErr.message}`);
+          return;
+        }
+        await loadTelegramTasks();
+        return;
+      }
+
+      if (action === 'to-day') {
+        const pickedDay = prompt(`Выберите день:
+${DAYS.join(', ')}`, DAYS[0]);
+        if (!pickedDay) return;
+        const day = DAYS.find((item) => item.toLowerCase() === pickedDay.trim().toLowerCase());
+        if (!day) {
+          alert('Неверный день.');
+          return;
+        }
+
+        commit(`Telegram-задача перенесена в день «${day}»`, (st) => {
+          getActiveSpace(st).days[day].push({
+            id: st.nextTaskId++,
+            title: text,
+            color: null,
+            pinned: false,
+            createdAt: Date.now(),
+            taskGroupId: null
+          });
+        });
+
+        const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.day) });
+        if (mvErr) alert(`Задача добавлена в день, но не обновлён тип в Supabase: ${mvErr.message}`);
+        await loadTelegramTasks();
+        return;
+      }
+
+      if (action === 'to-board') {
+        commit('Telegram-задача перенесена в поле доски', (st) => {
+          getActiveSpace(st).dockTasks.push({
+            id: st.nextTaskId++,
+            title: text,
+            tags: [],
+            pinned: false,
+            createdAt: Date.now()
+          });
+        });
+
+        const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.board) });
+        if (mvErr) alert(`Задача добавлена на доску, но не обновлён тип в Supabase: ${mvErr.message}`);
+        await loadTelegramTasks();
+      }
+    });
+
+    list.append(li);
+  });
+}
 
 function createSpaceState() {
   return {
