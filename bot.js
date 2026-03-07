@@ -110,7 +110,7 @@ bot.command('note', async (ctx) => {
     return;
   }
 
-  const { data, error } = await insertTask(rawText, 'notes');
+  const { data, error } = await insertTask(rawText, 'notes', ctx.from.id);
   if (error) {
     await ctx.reply(`Ошибка сохранения: ${error.message}`);
     return;
@@ -126,7 +126,7 @@ bot.command('day', async (ctx) => {
     return;
   }
 
-  const { data, error } = await insertTask(rawText, 'day');
+  const { data, error } = await insertTask(rawText, 'day', ctx.from.id);
   if (error) {
     await ctx.reply(`Ошибка сохранения: ${error.message}`);
     return;
@@ -142,7 +142,7 @@ bot.command('board', async (ctx) => {
     return;
   }
 
-  const { data, error } = await insertTask(rawText, 'board');
+  const { data, error } = await insertTask(rawText, 'board', ctx.from.id);
   if (error) {
     await ctx.reply(`Ошибка сохранения: ${error.message}`);
     return;
@@ -196,6 +196,7 @@ bot.command('list', async (ctx) => {
   const { data, error } = await supabase
     .from('tasks')
     .select('id, text, created_at, is_completed')
+    .eq('user_id', ctx.from.id) // <--- Добавьте эту строку
     .order('created_at', { ascending: false })
     .limit(10);
 
@@ -226,7 +227,7 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  const { data, error } = await insertTask(text, 'notes');
+  const { data, error } = await insertTask(text, 'notes', ctx.from.id);
   if (error) {
     await ctx.reply(`Ошибка сохранения: ${error.message}`);
     return;
