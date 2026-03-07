@@ -7,6 +7,14 @@ const SPACES = {
 const STORAGE_KEY = 'calendar-board-state-v2';
 const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
 
+// Получаем ID пользователя из Telegram WebApp
+const tg = window.Telegram?.WebApp;
+const telegramUser = tg?.initDataUnsafe?.user;
+const currentUserId = telegramUser?.id || null;
+
+// Для отладки в консоли (потом можно удалить)
+console.log('Telegram User ID:', currentUserId);
+
 const TELEGRAM_TARGET = {
   notes: 'notes',
   day: 'day',
