@@ -13,11 +13,7 @@ if (!TELEGRAM_BOT_TOKEN || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  global: {
-    headers: { 'x-user-id': 'service-role' } // Даем боту права сервиса
-  }
-});
-  }
+  global: { headers: { 'x-user-id': 'service-role' } }
 });
 
 const TARGET_MARKERS = {
