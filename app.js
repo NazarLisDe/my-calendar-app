@@ -28,7 +28,13 @@ const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL
 const SUPABASE_ANON_KEY = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
 
 const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
-  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: {
+        headers: { 
+          'x-user-id': String(currentUserId) 
+        }
+      }
+    })
   : null;
 
 function stripTelegramTargetMarker(text = '') {
