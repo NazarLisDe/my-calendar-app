@@ -35,11 +35,11 @@ function withTarget(text, target = 'notes') {
   return `${TARGET_MARKERS[target] || TARGET_MARKERS.notes} ${cleanText}`.trim();
 }
 
-async function insertTask(rawText, target = 'notes') {
+async function insertTask(rawText, userId, target = 'notes') {
   const text = withTarget(rawText, target);
   return supabase
     .from('tasks')
-    .insert({ text, is_completed: false })
+    .insert({ text, user_id: userId, is_completed: false })
     .select('id, text, created_at')
     .single();
 }
@@ -131,7 +131,7 @@ bot.command('note', async (ctx) => {
     return;
   }
 
-  const { data, error } = await insertTask(rawText, 'notes');
+  const { data, error } = await insertTask(rawText, ctx.from.id, 'notes');
   if (error) {
     await ctx.reply(`Ошибка сохранения: ${error.message}`);
     return;
@@ -147,7 +147,7 @@ bot.command('day', async (ctx) => {
     return;
   }
 
-  const { data, error } = await insertTask(rawText, 'day');
+  const { data, error } = await insertTask(rawText, ctx.from.id, 'day');
   if (error) {
     await ctx.reply(`Ошибка сохранения: ${error.message}`);
     return;
@@ -163,7 +163,7 @@ bot.command('board', async (ctx) => {
     return;
   }
 
-  const { data, error } = await insertTask(rawText, 'board');
+  const { data, error } = await insertTask(rawText, ctx.from.id, 'board');
   if (error) {
     await ctx.reply(`Ошибка сохранения: ${error.message}`);
     return;
@@ -217,6 +217,7 @@ bot.command('list', async (ctx) => {
   const { data, error } = await supabase
     .from('tasks')
     .select('id, text, created_at, is_completed')
+    .eq('user_id', ctx.from.id)
     .order('created_at', { ascending: false })
     .limit(10);
 
@@ -226,7 +227,7 @@ bot.command('list', async (ctx) => {
   }
 
   if (!data || data.length === 0) {
-    await ctx.reply('Пока нет заметок.');
+    await ctx.reply('У вас пока нет личных заметок.');
     return;
   }
 
@@ -237,26 +238,20 @@ bot.command('list', async (ctx) => {
     return `${status} ${icon} #${task.id} ${stripTargetMarker(task.text)}`;
   });
 
-  await ctx.reply(lines.join('\n'));
+  await ctx.reply(`📋 Ваши последние задачи:\n\n${lines.join('\n')}`);
 });
 
 bot.on('text', async (ctx) => {
   const text = ctx.message?.text?.trim();
-  if (!text) {
-    await ctx.reply('Текст заметки пустой.');
-    return;
-  }
+  if (!text || text.startsWith('/')) return;
 
-  const { data, error } = await insertTask(text, 'notes');
+  const { data, error } = await insertTask(text, ctx.from.id, 'notes');
   if (error) {
     await ctx.reply(`Ошибка сохранения: ${error.message}`);
     return;
   }
 
-  await ctx.reply(
-    `✅ Заметка сохранена (#${data.id}).\n` +
-    'Для переноса используйте: /move <id> <notes|day|board>'
-  );
+  await ctx.reply(`✅ Заметка сохранена в ваш аккаунт (#${data.id}).`);
 });
 
 module.exports = async (req, res) => {
