@@ -35,11 +35,15 @@ function withTarget(text, target = 'notes') {
   return `${TARGET_MARKERS[target] || TARGET_MARKERS.notes} ${cleanText}`.trim();
 }
 
-async function insertTask(rawText, target = 'notes') {
+async function insertTask(rawText, target = 'notes', userId = null) {
   const text = withTarget(rawText, target);
   return supabase
     .from('tasks')
-    .insert({ text, is_completed: false })
+    .insert({ 
+      text, 
+      is_completed: false, 
+      user_id: userId // <-- Добавляем привязку к вашему ID
+    })
     .select('id, text, created_at')
     .single();
 }
