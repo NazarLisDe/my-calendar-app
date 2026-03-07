@@ -163,11 +163,21 @@ async function loadTelegramTasks() {
   list.innerHTML = '<li>Загрузка задач...</li>';
 
   const { data, error } = await runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from('tasks')
-      .select('id, text, is_completed, created_at')
-      .order('created_at', { ascending: false })
-      .abortSignal(signal),
+    (signal) => {
+      // Создаем основу запроса
+      let query = supabaseClient
+        .from('tasks')
+        .select('id, text, is_completed, created_at, user_id');
+
+      // Применяем фильтр по ID из Telegram (из 13-й строки), если он есть
+      if (currentUserId) {
+        query = query.eq('user_id', currentUserId);
+      }
+
+      return query
+        .order('created_at', { ascending: false })
+        .abortSignal(signal);
+    },
     'Ошибка загрузки задач из Supabase.'
   );
 
