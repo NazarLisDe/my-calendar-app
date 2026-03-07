@@ -7,6 +7,321 @@ const SPACES = {
 const STORAGE_KEY = 'calendar-board-state-v2';
 const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
 
+const TELEGRAM_TARGET = {
+  notes: 'notes',
+  day: 'day',
+  board: 'board'
+};
+
+const TELEGRAM_REQUEST_TIMEOUT_MS = 12000;
+const TELEGRAM_RETRY_COUNT = 1;
+
+const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL;
+const SUPABASE_ANON_KEY = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
+
+const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+function stripTelegramTargetMarker(text = '') {
+  return text.replace(/^\[(?:NOTES|DAY|BOARD)\]\s*/i, '').trim();
+}
+
+function detectTelegramTarget(text = '') {
+  if (/^\[DAY\]/i.test(text)) return TELEGRAM_TARGET.day;
+  if (/^\[BOARD\]/i.test(text)) return TELEGRAM_TARGET.board;
+  return TELEGRAM_TARGET.notes;
+}
+
+function withTelegramTarget(text = '', target = TELEGRAM_TARGET.notes) {
+  const clean = stripTelegramTargetMarker(text);
+  const marker = target === TELEGRAM_TARGET.day
+    ? '[DAY]'
+    : target === TELEGRAM_TARGET.board
+      ? '[BOARD]'
+      : '[NOTES]';
+  return `${marker} ${clean}`.trim();
+}
+
+function normalizeTelegramError(error, fallbackMessage) {
+  const message = error?.message || String(error || fallbackMessage);
+  if (/failed to fetch|networkerror|network request failed|load failed|abort/i.test(message)) {
+    return new Error('Не удалось подключиться к Supabase. Проверьте интернет, CORS в Supabase и правильность SUPABASE_URL / SUPABASE_ANON_KEY.');
+  }
+  return new Error(message || fallbackMessage);
+}
+
+function escapeHtml(value = '') {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function getBoardTransferTargets() {
+  const active = getActiveSpace(effectiveState());
+  const targets = [];
+
+  DAYS.forEach((day) => {
+    active.days[day].forEach((task) => {
+      targets.push({
+        taskId: task.id,
+        label: `${day}: ${task.title || 'Без названия'}`
+      });
+    });
+  });
+
+  active.dockTasks.forEach((task) => {
+    targets.push({
+      taskId: task.id,
+      label: `Поле доски: ${task.title || 'Без названия'}`
+    });
+  });
+
+  return targets;
+}
+
+async function runTelegramSupabaseRequest(buildRequest, fallbackMessage) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= TELEGRAM_RETRY_COUNT; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), TELEGRAM_REQUEST_TIMEOUT_MS);
+
+    try {
+      const { data, error } = await buildRequest(controller.signal);
+      clearTimeout(timeoutId);
+
+      if (error) {
+        lastError = normalizeTelegramError(error, fallbackMessage);
+        if (attempt < TELEGRAM_RETRY_COUNT) continue;
+        return { data: null, error: lastError };
+      }
+
+      return { data, error: null };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      lastError = normalizeTelegramError(error, fallbackMessage);
+      if (attempt < TELEGRAM_RETRY_COUNT) continue;
+      return { data: null, error: lastError };
+    }
+  }
+
+  return { data: null, error: lastError || new Error(fallbackMessage) };
+}
+
+async function updateTelegramTask(taskId, updates) {
+  if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
+
+  return runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from('tasks')
+      .update(updates)
+      .eq('id', taskId)
+      .abortSignal(signal),
+    'Ошибка обновления задачи в Supabase.'
+  );
+}
+
+async function deleteTelegramTask(taskId) {
+  if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
+
+  return runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from('tasks')
+      .delete()
+      .eq('id', taskId)
+      .abortSignal(signal),
+    'Ошибка удаления задачи из Supabase.'
+  );
+}
+
+async function loadTelegramTasks() {
+  const list = document.getElementById('telegramTasksList');
+  if (!list) return;
+
+  if (!window.supabase) {
+    list.innerHTML = '<li>Supabase SDK не загружен.</li>';
+    return;
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    list.innerHTML = '<li>Добавьте SUPABASE_URL и SUPABASE_ANON_KEY в window.CALENDAR_CONFIG.</li>';
+    return;
+  }
+
+  list.innerHTML = '<li>Загрузка задач...</li>';
+
+  const { data, error } = await runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from('tasks')
+      .select('id, text, is_completed, created_at')
+      .order('created_at', { ascending: false })
+      .abortSignal(signal),
+    'Ошибка загрузки задач из Supabase.'
+  );
+
+  if (error) {
+    list.innerHTML = `<li>Ошибка загрузки: ${error.message}</li>`;
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    list.innerHTML = '<li>Пока нет задач из Telegram.</li>';
+    return;
+  }
+
+  list.innerHTML = '';
+
+  data.forEach((task) => {
+    const li = document.createElement('li');
+    li.className = 'telegram-task-item';
+    li.dataset.taskId = String(task.id);
+
+    const text = stripTelegramTargetMarker(task.text || '');
+    const target = detectTelegramTarget(task.text || '');
+    const targetLabel = target === TELEGRAM_TARGET.day ? 'день' : target === TELEGRAM_TARGET.board ? 'доска' : 'заметки';
+    const status = task.is_completed ? '✅' : '⬜️';
+
+    li.innerHTML = `
+      <div class="telegram-task-row">
+        <span class="telegram-task-title">${status} ${escapeHtml(text)}</span>
+        <small class="telegram-task-target">${targetLabel}</small>
+      </div>
+      <div class="telegram-task-actions">
+        <button type="button" data-action="edit">Ред.</button>
+        <button type="button" data-action="to-day">В день</button>
+        <button type="button" data-action="to-board">На доску</button>
+        <button type="button" data-action="delete">Удалить</button>
+      </div>
+      <div class="telegram-transfer-menu hidden" data-menu="day"></div>
+      <div class="telegram-transfer-menu hidden" data-menu="board"></div>
+    `;
+
+    const dayMenu = li.querySelector('[data-menu="day"]');
+    const boardMenu = li.querySelector('[data-menu="board"]');
+
+    dayMenu.innerHTML = DAYS.map((day) => `<button type="button" data-day="${day}">${day}</button>`).join('');
+
+    const closeMenus = () => {
+      dayMenu.classList.add('hidden');
+      boardMenu.classList.add('hidden');
+    };
+
+    li.addEventListener('click', async (event) => {
+      const action = event.target?.dataset?.action;
+      const day = event.target?.dataset?.day;
+      const boardTaskIdRaw = event.target?.dataset?.boardTaskId;
+
+      if (action === 'edit') {
+        const nextText = prompt('Новый текст задачи', text);
+        if (nextText === null) return;
+        const clean = nextText.trim();
+        if (!clean) return;
+
+        const { error: updErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(clean, target) });
+        if (updErr) {
+          alert(`Ошибка редактирования: ${updErr.message}`);
+          return;
+        }
+        await loadTelegramTasks();
+        return;
+      }
+
+      if (action === 'delete') {
+        if (!confirm('Удалить задачу из Telegram списка?')) return;
+        const { error: delErr } = await deleteTelegramTask(task.id);
+        if (delErr) {
+          alert(`Ошибка удаления: ${delErr.message}`);
+          return;
+        }
+        await loadTelegramTasks();
+        return;
+      }
+
+      if (action === 'to-day') {
+        const shouldOpen = dayMenu.classList.contains('hidden');
+        closeMenus();
+        if (shouldOpen) dayMenu.classList.remove('hidden');
+        return;
+      }
+
+      if (action === 'to-board') {
+        const targets = getBoardTransferTargets();
+        if (targets.length === 0) {
+          alert('Нет доступных досок. Сначала создайте хотя бы одну задачу в календаре или в поле доски.');
+          return;
+        }
+
+        boardMenu.innerHTML = targets
+          .map((item) => `<button type="button" data-board-task-id="${item.taskId}">${escapeHtml(item.label)}</button>`)
+          .join('');
+
+        const shouldOpen = boardMenu.classList.contains('hidden');
+        closeMenus();
+        if (shouldOpen) boardMenu.classList.remove('hidden');
+        return;
+      }
+
+      if (day) {
+        closeMenus();
+
+        commit(`Telegram-задача перенесена в день «${day}»`, (st) => {
+          getActiveSpace(st).days[day].push({
+            id: st.nextTaskId++,
+            title: text,
+            color: null,
+            pinned: false,
+            createdAt: Date.now(),
+            taskGroupId: null
+          });
+        });
+
+        const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.day) });
+        if (mvErr) alert(`Задача добавлена в день, но не обновлён тип в Supabase: ${mvErr.message}`);
+        await loadTelegramTasks();
+        return;
+      }
+
+      if (boardTaskIdRaw) {
+        closeMenus();
+
+        const boardTaskId = Number(boardTaskIdRaw);
+        if (!Number.isInteger(boardTaskId)) {
+          alert('Некорректная доска.');
+          return;
+        }
+
+        commit('Telegram-задача перенесена на выбранную доску', (st) => {
+          const board = ensureBoard(st, boardTaskId);
+          board.clouds.push({
+            id: st.nextCloudId++,
+            text,
+            x: 80,
+            y: 80,
+            width: 220,
+            height: 140,
+            groupId: null,
+            createdAt: Date.now()
+          });
+        });
+
+        currentBoardTaskId = boardTaskId;
+        selectedCloudIds = new Set();
+        renderBoard();
+
+        const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.board) });
+        if (mvErr) alert(`Задача добавлена на доску, но не обновлён тип в Supabase: ${mvErr.message}`);
+        await loadTelegramTasks();
+      }
+    });
+
+    list.append(li);
+  });
+}
+
 function createSpaceState() {
   return {
     days: Object.fromEntries(DAYS.map((d) => [d, []])),
@@ -1640,3 +1955,4 @@ setSpaceMenuOpen(false);
 setDockMenuOpen(false);
 setNotesPanelOpen(false);
 renderAll();
+loadTelegramTasks();
