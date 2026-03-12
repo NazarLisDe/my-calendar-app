@@ -1398,6 +1398,14 @@ function renderSideNotes(st = effectiveState()) {
   const sideNotes = getGlobalSideNotes(st);
   list.innerHTML = '';
 
+  const startSideNoteDrag = (note, e) => {
+    dragSideNote = { noteId: note.id };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', note.text || '');
+    }
+  };
+
   if (sideNotes.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'side-note-empty';
@@ -1409,6 +1417,7 @@ function renderSideNotes(st = effectiveState()) {
   sideNotes.forEach((note) => {
     const li = document.createElement('li');
     li.className = 'side-note-item';
+    li.draggable = true;
     li.innerHTML = `
       <textarea>${note.text || ''}</textarea>
       <div class="side-note-actions">
@@ -1425,13 +1434,20 @@ function renderSideNotes(st = effectiveState()) {
       });
     });
 
+    li.addEventListener('dragstart', (e) => {
+      if (e.target.closest('textarea, .side-note-delete')) {
+        e.preventDefault();
+        return;
+      }
+      startSideNoteDrag(note, e);
+    });
+    li.addEventListener('dragend', () => {
+      dragSideNote = null;
+    });
+
     const dragBtn = li.querySelector('.side-note-drag');
     dragBtn.addEventListener('dragstart', (e) => {
-      dragSideNote = { noteId: note.id };
-      if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', note.text || '');
-      }
+      startSideNoteDrag(note, e);
     });
     dragBtn.addEventListener('dragend', () => {
       dragSideNote = null;
