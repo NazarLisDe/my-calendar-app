@@ -428,6 +428,11 @@ main {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  cursor: grab;
+}
+
+.side-note-item:active {
+  cursor: grabbing;
 }
 
 .side-note-item textarea {
