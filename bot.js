@@ -16,6 +16,31 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   global: { headers: { 'x-user-id': 'service-role' } }
 });
 
+// <<< ВСТАВЛЯЙТЕ СЮДА >>>
+bot.command('password', async (ctx) => {
+  const args = ctx.message.text.split(' ');
+  const newPassword = args[1];
+
+  if (!newPassword) {
+    return ctx.reply('Пожалуйста, укажите пароль. Пример: /password 12345');
+  }
+
+  const { error } = await supabase
+    .from('users_auth')
+    .upsert({ 
+      telegram_id: ctx.from.id, 
+      password_hash: newPassword 
+    });
+
+  if (error) {
+    console.error('Ошибка БД:', error);
+    return ctx.reply('❌ Ошибка сохранения пароля');
+  }
+  ctx.reply('✅ Пароль успешно установлен! Теперь вы можете войти на сайт.');
+});
+// <<< КОНЕЦ ВСТАВКИ >>>
+
+// Дальше идет ваш существующий код (цепочка функций и в конце module.exports)
 const TARGET_MARKERS = {
   notes: '[NOTES]',
   day: '[DAY]',
