@@ -7,13 +7,55 @@ const SPACES = {
 const STORAGE_KEY = 'calendar-board-state-v2';
 const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
 
-// Получаем ID пользователя из Telegram WebApp
+// ... (выше DAYS, SPACES и т.д.)
+
+// 1. Инициализация Supabase (убедитесь, что она выше!)
+// const supabase = createClient(...) 
+
+// 2. Получаем данные из Telegram, если открыли как Mini App
 const tg = window.Telegram?.WebApp;
 const telegramUser = tg?.initDataUnsafe?.user;
-const currentUserId = telegramUser?.id || null;
 
-// Для отладки в консоли (потом можно удалить)
-console.log('Telegram User ID:', currentUserId);
+// 3. Пытаемся взять ID либо из Telegram, либо из памяти браузера
+let currentUserId = telegramUser?.id || localStorage.getItem('tg_user_id');
+
+// 4. Функция самой проверки
+async function checkAuth() {
+    // Если зашли через обычный браузер и еще не логинились
+    if (!currentUserId) {
+        const id = prompt("Введите ваш Telegram ID для входа:");
+        const pass = prompt("Введите ваш пароль:");
+
+        if (!id || !pass) {
+            alert("Вход обязателен!");
+            return checkAuth();
+        }
+
+        const { data, error } = await supabase
+            .from('users_auth')
+            .select('*')
+            .eq('telegram_id', id)
+            .eq('password_hash', pass)
+            .single();
+
+        if (data) {
+            localStorage.setItem('tg_user_id', id);
+            currentUserId = id;
+            alert("Успешный вход!");
+            location.reload();
+        } else {
+            alert("Неверный ID или пароль!");
+            return checkAuth();
+        }
+    }
+}
+
+// Запускаем проверку только если мы не в Telegram (там вход по факту открытия)
+if (!telegramUser?.id) {
+    checkAuth();
+}
+
+console.log('Active User ID:', currentUserId);
 
 const TELEGRAM_TARGET = {
   notes: 'notes',
