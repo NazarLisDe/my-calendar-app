@@ -144,6 +144,30 @@ bot.start(async (ctx) => {
   );
 });
 
+bot.command('password', async (ctx) => {
+  const telegramId = ctx.from.id;
+  const password = ctx.message.text.replace('/password', '').trim();
+
+  if (!password) {
+    return ctx.reply('Пожалуйста, введите пароль после команды, например: /password 1234');
+  }
+
+  // Записываем или обновляем пароль в таблице users_auth
+  const { error } = await supabase
+    .from('users_auth')
+    .upsert({ 
+      telegram_id: telegramId, 
+      password_hash: password 
+    }, { onConflict: 'telegram_id' });
+
+  if (error) {
+    console.error('Ошибка Supabase:', error);
+    return ctx.reply('Произошла ошибка при сохранении пароля.');
+  }
+
+  ctx.reply(`✅ Пароль успешно установлен! Теперь вы можете войти на сайт, используя ID: ${telegramId}`);
+});
+
 bot.command('note', async (ctx) => {
   const rawText = ctx.message.text.replace(/^\/note\s*/i, '').trim();
   if (!rawText) {
