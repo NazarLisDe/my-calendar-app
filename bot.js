@@ -115,18 +115,32 @@ async function moveTask(taskId, target) {
 }
 
 bot.start(async (ctx) => {
-  await ctx.reply(
-    [
-      'Привет! Я сохраняю заметки в Supabase.',
-      '',
-      'Команды:',
-      '/note <текст> — создать заметку Telegram',
-      '/day <текст> — сразу в список задач дня',
-      '/board <текст> — сразу на доску',
-      '/edit <id> | <новый текст> — редактировать заметку',
-      '/move <id> <notes|day|board> — перенести заметку',
-      '/list — показать последние 10 заметок'
-    ].join('\n')
+  const telegramId = ctx.from.id;
+  
+  // Проверяем, есть ли пользователь в базе данных
+  const { data: authData } = await supabase
+    .from('users_auth')
+    .select('telegram_id')
+    .eq('telegram_id', telegramId)
+    .single();
+
+  // Если пользователя нет в таблице users_auth
+  if (!authData) {
+    return ctx.reply(
+      `Привет! 👋 Вы еще не зарегистрированы.\n\n` +
+      `Чтобы войти на сайт, придумайте пароль и отправьте команду:\n` +
+      `/password ваш_пароль`
+    );
+  }
+
+  // Если пользователь уже есть в базе
+  ctx.reply(
+    `С возвращением! 📅 Аккаунт подтвержден.\n\n` +
+    `Ваш ID для входа: ${telegramId}\n\n` +
+    `Команды для работы:\n` +
+    `/note <текст> — заметка\n` +
+    `/day <текст> — в план дня\n` +
+    `/board <текст> — на доску`
   );
 });
 
