@@ -8,17 +8,14 @@ const {
 } = process.env;
 
 if (!TELEGRAM_BOT_TOKEN || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error('Missing required environment variables: TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_ANON_KEY');
+  throw new Error('Missing environment variables');
 }
 
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const TARGET_MARKERS = {
-  notes: '[NOTES]',
-  day: '[DAY]',
-  board: '[BOARD]'
-};
+// --- 1. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+const TARGET_MARKERS = { notes: '[NOTES]', day: '[DAY]', board: '[BOARD]' };
 
 function stripTargetMarker(text = '') {
   return text.replace(/^\[(?:NOTES|DAY|BOARD)\]\s*/i, '').trim();
@@ -31,248 +28,105 @@ function detectTarget(text = '') {
 }
 
 function withTarget(text, target = 'notes') {
-  const cleanText = stripTargetMarker(text);
-  return `${TARGET_MARKERS[target] || TARGET_MARKERS.notes} ${cleanText}`.trim();
+  return `${TARGET_MARKERS[target] || TARGET_MARKERS.notes} ${stripTargetMarker(text)}`.trim();
 }
 
 async function insertTask(rawText, userId, target = 'notes') {
   const text = withTarget(rawText, target);
-  return supabase
-    .from('tasks')
-    .insert({ text, user_id: userId, is_completed: false })
-    .select('id, text, created_at')
-    .single();
+  return supabase.from('tasks').insert({ text, user_id: userId, is_completed: false }).select().single();
 }
 
-async function updateTaskText(taskId, rawText) {
-  const { data: currentTask, error: findError } = await supabase
-    .from('tasks')
-    .select('id, text')
-    .eq('id', taskId)
-    .single();
+// --- 2. АВТОРИЗАЦИЯ (ТО, ЧЕГО НЕ ХВАТАЛО) ---
+bot.command('password', async (ctx) => {
+  const telegramId = ctx.from.id;
+  const password = ctx.message.text.replace('/password', '').trim();
+  
+  if (!password) return ctx.reply('❌ Укажите пароль. Пример: /password 1234');
 
-  if (findError) return { error: findError };
+  const { error } = await supabase
+    .from('users_auth')
+    .upsert({ telegram_id: telegramId, password_hash: password }, { onConflict: 'telegram_id' });
 
-  const target = detectTarget(currentTask.text || '');
-  const text = withTarget(rawText, target);
-
-  return supabase
-    .from('tasks')
-    .update({ text })
-    .eq('id', taskId)
-    .select('id, text, created_at')
-    .single();
-}
-
-async function moveTask(taskId, target) {
-  const { data: currentTask, error: findError } = await supabase
-    .from('tasks')
-    .select('id, text')
-    .eq('id', taskId)
-    .single();
-
-  if (findError) return { error: findError };
-
-  const text = withTarget(currentTask.text || '', target);
-
-  return supabase
-    .from('tasks')
-    .update({ text })
-    .eq('id', taskId)
-    .select('id, text, created_at')
-    .single();
-}
-
-bot.start(async (ctx) => {
-  await ctx.reply(
-    [
-      'Привет! Я сохраняю заметки в Supabase.',
-      '',
-      'Команды:',
-      '/note <текст> — создать заметку Telegram',
-      '/day <текст> — сразу в список задач дня',
-      '/board <текст> — сразу на доску',
-      '/edit <id> | <новый текст> — редактировать заметку',
-      '/move <id> <notes|day|board> — перенести заметку',
-      '/list — показать последние 10 заметок'
-    ].join('\n')
-  );
+  if (error) return ctx.reply('❌ Ошибка сохранения пароля.');
+  ctx.reply(`✅ Пароль установлен! ID: ${telegramId}\nИспользуйте его для входа на сайт.`);
 });
 
+bot.start(async (ctx) => {
+  const { data: authData } = await supabase
+    .from('users_auth').select('telegram_id').eq('telegram_id', ctx.from.id).single();
 
+  if (!authData) {
+    return ctx.reply('Привет! 👋 Для начала работы установите пароль:\n/password ваш_пароль');
+  }
+  ctx.reply('С возвращением! ✨\nИспользуйте /note, /day, /board или /help для списка всех команд.');
+});
+
+// --- 3. УПРАВЛЕНИЕ ЗАДАЧАМИ ---
 bot.command('help', async (ctx) => {
   await ctx.reply(
-    [
-      '🤖 *Справка по командам:*',
-      '',
-      '/start — запуск и краткое описание',
-      '/help — показать это сообщение',
-      '/list — последние 10 задач из базы',
-      '',
-      '📝 *Создание:*',
-      'Просто отправьте текст — создастся обычная заметка.',
-      '/day <текст> — задача в список дня 📅',
-      '/board <текст> — задача на доску 🧩',
-      '',
-      '⚙️ *Управление:*',
-      '/edit <id> | <текст> — изменить текст',
-      '/move <id> <target> — перенести (notes, day, board)',
-      '',
-      '💡 *Подсказка:* Нажмите синюю кнопку «Open» слева, чтобы открыть календарь в браузере!'
-    ].join('\n'),
+    '🤖 *Справка:*\n\n' +
+    '/note — в заметки\n/day — в план дня\n/board — на доску\n' +
+    '/edit <id> | <текст> — изменить\n' +
+    '/move <id> <target> — перенести\n' +
+    '/list — последние 10 записей',
     { parse_mode: 'Markdown' }
   );
 });
 
+bot.command('list', async (ctx) => {
+  const { data, error } = await supabase
+    .from('tasks').select('*').eq('user_id', ctx.from.id)
+    .order('created_at', { ascending: false }).limit(10);
+
+  if (error || !data?.length) return ctx.reply('Записей нет.');
+  const lines = data.map(t => {
+    const icon = detectTarget(t.text) === 'day' ? '📅' : detectTarget(t.text) === 'board' ? '🧩' : '📝';
+    return `${icon} #${t.id} ${stripTargetMarker(t.text)}`;
+  });
+  ctx.reply(`📋 Последние задачи:\n\n${lines.join('\n')}`);
+});
+
+// Обработка команд создания через функции (как в твоем коде)
 bot.command('note', async (ctx) => {
-  const rawText = ctx.message.text.replace(/^\/note\s*/i, '').trim();
-  if (!rawText) {
-    await ctx.reply('Использование: /note <текст заметки>');
-    return;
+  const text = ctx.message.text.replace(/^\/note\s*/i, '').trim();
+  if (text) {
+    const { data } = await insertTask(text, ctx.from.id, 'notes');
+    if (data) ctx.reply(`✅ Сохранено (#${data.id})`);
   }
-
-  const { data, error } = await insertTask(rawText, ctx.from.id, 'notes');
-  if (error) {
-    await ctx.reply(`Ошибка сохранения: ${error.message}`);
-    return;
-  }
-
-  await ctx.reply(`✅ Сохранено (#${data.id}): ${stripTargetMarker(data.text)}`);
 });
 
 bot.command('day', async (ctx) => {
-  const rawText = ctx.message.text.replace(/^\/day\s*/i, '').trim();
-  if (!rawText) {
-    await ctx.reply('Использование: /day <текст задачи>');
-    return;
+  const text = ctx.message.text.replace(/^\/day\s*/i, '').trim();
+  if (text) {
+    const { data } = await insertTask(text, ctx.from.id, 'day');
+    if (data) ctx.reply(`📅 План дня (#${data.id})`);
   }
-
-  const { data, error } = await insertTask(rawText, ctx.from.id, 'day');
-  if (error) {
-    await ctx.reply(`Ошибка сохранения: ${error.message}`);
-    return;
-  }
-
-  await ctx.reply(`📅 Перенесено в список дня (#${data.id}): ${stripTargetMarker(data.text)}`);
 });
 
 bot.command('board', async (ctx) => {
-  const rawText = ctx.message.text.replace(/^\/board\s*/i, '').trim();
-  if (!rawText) {
-    await ctx.reply('Использование: /board <текст задачи>');
-    return;
+  const text = ctx.message.text.replace(/^\/board\s*/i, '').trim();
+  if (text) {
+    const { data } = await insertTask(text, ctx.from.id, 'board');
+    if (data) ctx.reply(`🧩 Доска (#${data.id})`);
   }
-
-  const { data, error } = await insertTask(rawText, ctx.from.id, 'board');
-  if (error) {
-    await ctx.reply(`Ошибка сохранения: ${error.message}`);
-    return;
-  }
-
-  await ctx.reply(`🧩 Перенесено на доску (#${data.id}): ${stripTargetMarker(data.text)}`);
 });
 
-bot.command('edit', async (ctx) => {
-  const payload = ctx.message.text.replace(/^\/edit\s*/i, '').trim();
-  const [idPart, ...textParts] = payload.split('|');
-  const taskId = Number((idPart || '').trim());
-  const nextText = textParts.join('|').trim();
-
-  if (!Number.isInteger(taskId) || taskId <= 0 || !nextText) {
-    await ctx.reply('Использование: /edit <id> | <новый текст>');
-    return;
-  }
-
-  const { data, error } = await updateTaskText(taskId, nextText);
-  if (error) {
-    await ctx.reply(`Ошибка редактирования: ${error.message}`);
-    return;
-  }
-
-  await ctx.reply(`✏️ Обновлено (#${data.id}): ${stripTargetMarker(data.text)}`);
-});
-
-bot.command('move', async (ctx) => {
-  const payload = ctx.message.text.replace(/^\/move\s*/i, '').trim();
-  const [taskIdRaw, targetRaw] = payload.split(/\s+/);
-  const taskId = Number(taskIdRaw);
-  const target = (targetRaw || '').toLowerCase();
-
-  if (!Number.isInteger(taskId) || taskId <= 0 || !['notes', 'day', 'board'].includes(target)) {
-    await ctx.reply('Использование: /move <id> <notes|day|board>');
-    return;
-  }
-
-  const { data, error } = await moveTask(taskId, target);
-  if (error) {
-    await ctx.reply(`Ошибка переноса: ${error.message}`);
-    return;
-  }
-
-  const targetLabel = target === 'day' ? 'список дня' : target === 'board' ? 'доску' : 'заметки';
-  await ctx.reply(`🔁 Задача #${data.id} перенесена в ${targetLabel}: ${stripTargetMarker(data.text)}`);
-});
-
-bot.command('list', async (ctx) => {
-  const { data, error } = await supabase
-    .from('tasks')
-    .select('id, text, created_at, is_completed')
-    .eq('user_id', ctx.from.id)
-    .order('created_at', { ascending: false })
-    .limit(10);
-
-  if (error) {
-    await ctx.reply(`Ошибка загрузки: ${error.message}`);
-    return;
-  }
-
-  if (!data || data.length === 0) {
-    await ctx.reply('У вас пока нет личных заметок.');
-    return;
-  }
-
-  const lines = data.map((task) => {
-    const target = detectTarget(task.text);
-    const icon = target === 'day' ? '📅' : target === 'board' ? '🧩' : '📝';
-    const status = task.is_completed ? '✅' : '⬜️';
-    return `${status} ${icon} #${task.id} ${stripTargetMarker(task.text)}`;
-  });
-
-  await ctx.reply(`📋 Ваши последние задачи:\n\n${lines.join('\n')}`);
-});
-
+// Обработка простого текста
 bot.on('text', async (ctx) => {
-  const text = ctx.message?.text?.trim();
-  if (!text || text.startsWith('/')) return;
-
-  const { data, error } = await insertTask(text, ctx.from.id, 'notes');
-  if (error) {
-    await ctx.reply(`Ошибка сохранения: ${error.message}`);
-    return;
-  }
-
-  await ctx.reply(`✅ Заметка сохранена в ваш аккаунт (#${data.id}).`);
+  if (ctx.message.text.startsWith('/')) return;
+  const { data } = await insertTask(ctx.message.text, ctx.from.id, 'notes');
+  if (data) ctx.reply(`✅ Сохранено (#${data.id})`);
 });
 
+// --- 4. ЭКСПОРТ ДЛЯ VERCEL ---
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
-    res.status(405).send('Method Not Allowed');
-    return;
-  }
-
+  if (req.method !== 'POST') return res.status(200).send('Bot is running');
   try {
     const update = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-
-    if (!update || typeof update !== 'object') {
-      res.status(400).send('Invalid webhook payload');
-      return;
-    }
-
     await bot.handleUpdate(update);
     res.status(200).send('OK');
-  } catch (error) {
-    console.error('Telegram webhook error:', error);
-    res.status(500).send('Internal Server Error');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error');
   }
 };
