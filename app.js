@@ -130,7 +130,7 @@ function showLoginModal() {
 }
 
 // API эндпоинт для запроса смены пароля (заглушка - вставить реальный адрес)
-const PASSWORD_RESET_API_URL = 'https://your-api.example.com/request-password-reset';
+const PASSWORD_RESET_API_URL = 'https://mexvcooxruzxrntvhzmc.supabase.co/functions/v1/request-password-reset';
 
 // Функция запроса смены пароля
 async function requestPasswordReset(tgId) {
