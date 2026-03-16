@@ -810,3 +810,114 @@ main {
   cursor: pointer;
   font-size: 0.82rem;
 }
+
+/* Login Modal Styles */
+.login-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: color-mix(in srgb, #000 60%, transparent);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+
+.login-overlay.show {
+  display: flex;
+}
+
+.login-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px;
+  width: 90%;
+  max-width: 380px;
+  box-shadow: 0 20px 60px color-mix(in srgb, #000 25%, transparent);
+  animation: slideUp 300ms ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.login-modal h2 {
+  margin: 0 0 24px;
+  font-size: 24px;
+  color: var(--text);
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 14px;
+  transition: border-color 200ms ease;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.form-error {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #d32f2f 15%, transparent);
+  border: 1px solid #d32f2f;
+  border-radius: 8px;
+  color: #d32f2f;
+  font-size: 13px;
+}
+
+.login-btn {
+  width: 100%;
+  padding: 12px;
+  background: var(--accent);
+  color: white;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 14px;
+  transition: 200ms ease;
+}
+
+.login-btn:hover {
+  background: color-mix(in srgb, var(--accent) 85%, #000);
+}
+
+.login-btn:active {
+  transform: scale(0.98);
+}
+
+.login-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

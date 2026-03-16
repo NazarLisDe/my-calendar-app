@@ -125,6 +125,35 @@
     <button id="ctxDelete" type="button">Удалить</button>
   </div>
 
+  <div id="login-overlay" class="login-overlay" role="dialog" aria-labelledby="LoginTitle">
+    <div class="login-modal">
+      <h2 id="LoginTitle">Вход в систему</h2>
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="telegramIdInput">Telegram ID:</label>
+          <input 
+            id="telegramIdInput" 
+            type="number" 
+            placeholder="Введите ваш Telegram ID" 
+            required 
+            inputmode="numeric"
+          />
+        </div>
+        <div class="form-group">
+          <label for="passwordInput">Пароль:</label>
+          <input 
+            id="passwordInput" 
+            type="password" 
+            placeholder="Введите ваш пароль" 
+            required 
+          />
+        </div>
+        <div class="form-error hidden" id="loginError" role="alert"></div>
+        <button type="submit" class="login-btn">Войти</button>
+      </form>
+    </div>
+  </div>
+
   <script>
     window.CALENDAR_CONFIG = window.CALENDAR_CONFIG || {
       SUPABASE_URL: 'https://mexvcooxruzxrntvhzmc.supabase.co',

@@ -19,35 +19,111 @@ const telegramUser = tg?.initDataUnsafe?.user;
 // 3. Пытаемся взять ID либо из Telegram, либо из памяти браузера
 let currentUserId = telegramUser?.id || localStorage.getItem('tg_user_id');
 
+// Константы Supabase (должны быть перед checkAuth)
+const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL;
+const SUPABASE_ANON_KEY = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
+
 // 4. Функция самой проверки
 async function checkAuth() {
     // Если зашли через обычный браузер и еще не логинились
     if (!currentUserId) {
-        const id = prompt("Введите ваш Telegram ID для входа:");
-        const pass = prompt("Введите ваш пароль:");
-
-        if (!id || !pass) {
-            alert("Вход обязателен!");
-            return checkAuth();
-        }
-
-        const { data, error } = await supabase
-            .from('users_auth')
-            .select('*')
-            .eq('telegram_id', id)
-            .eq('password_hash', pass)
-            .single();
-
-        if (data) {
-            localStorage.setItem('tg_user_id', id);
-            currentUserId = id;
-            alert("Успешный вход!");
-            location.reload();
-        } else {
-            alert("Неверный ID или пароль!");
-            return checkAuth();
-        }
+        // Показываем модальное окно входа
+        showLoginModal();
     }
+}
+
+// Функция показа модального окна входа
+function showLoginModal() {
+    const overlay = document.getElementById('login-overlay');
+    const form = document.getElementById('loginForm');
+    const errorElement = document.getElementById('loginError');
+    const submitBtn = form.querySelector('button[type="submit"]');
+    
+    // Очищаем формь и ошибки
+    form.reset();
+    errorElement.textContent = '';
+    errorElement.classList.add('hidden');
+    
+    // Показываем overlay
+    overlay.classList.add('show');
+    
+    // Устанавливаем фокус на первое поле
+    document.getElementById('telegramIdInput').focus();
+    
+    // Обработчик отправки формы
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        
+        const telegramId = document.getElementById('telegramIdInput').value.trim();
+        const password = document.getElementById('passwordInput').value.trim();
+        
+        if (!telegramId || !password) {
+            showLoginError('Пожалуйста, заполните все поля');
+            return;
+        }
+        
+        // Отключаем кнопку во время проверки
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Проверка...';
+        
+        try {
+            // Проверяем учетные данные в Supabase
+            const supabase = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
+                ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+                : null;
+                
+            if (!supabase) {
+                showLoginError('Ошибка подключения к Supabase');
+                return;
+            }
+            
+            const { data, error } = await supabase
+                .from('users_auth')
+                .select('telegram_id')
+                .eq('telegram_id', telegramId)
+                .eq('password_hash', password)
+                .single();
+            
+            if (error || !data) {
+                showLoginError('Неверный Telegram ID или пароль');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Войти';
+                return;
+            }
+            
+            // Успешный вход
+            localStorage.setItem('tg_user_id', telegramId);
+            currentUserId = telegramId;
+            
+            // Скрываем модальное окно
+            overlay.classList.remove('show');
+            form.removeEventListener('submit', handleSubmit);
+            submitBtn.textContent = 'Войти';
+            submitBtn.disabled = false;
+            
+            // Перезагружаем страницу или продолжаем инициализацию
+            location.reload();
+            
+        } catch (err) {
+            console.error('Login error:', err);
+            showLoginError('Ошибка при входе. Проверьте соединение с интернетом');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Войти';
+        }
+    };
+    
+    // Функция показа ошибки
+    function showLoginError(message) {
+        errorElement.textContent = message;
+        errorElement.classList.remove('hidden');
+    }
+    
+    // Удаляем старые обработчики (если есть)
+    const newForm = form.cloneNode(true);
+    form.parentNode.replaceChild(newForm, form);
+    
+    // Добавляем новый обработчик
+    document.getElementById('loginForm').addEventListener('submit', handleSubmit);
 }
 
 // Запускаем проверку только если мы не в Telegram (там вход по факту открытия)
@@ -65,9 +141,6 @@ const TELEGRAM_TARGET = {
 
 const TELEGRAM_REQUEST_TIMEOUT_MS = 12000;
 const TELEGRAM_RETRY_COUNT = 1;
-
-const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL;
-const SUPABASE_ANON_KEY = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
 
 const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
