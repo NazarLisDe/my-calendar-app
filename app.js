@@ -124,6 +124,132 @@ function showLoginModal() {
     
     // Добавляем новый обработчик
     document.getElementById('loginForm').addEventListener('submit', handleSubmit);
+    
+    // Настраиваем UI для смены пароля
+    setupPasswordResetUI();
+}
+
+// API эндпоинт для запроса смены пароля (заглушка - вставить реальный адрес)
+const PASSWORD_RESET_API_URL = 'https://your-api.example.com/request-password-reset';
+
+// Функция запроса смены пароля
+async function requestPasswordReset(tgId) {
+    try {
+        const response = await fetch(PASSWORD_RESET_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                telegram_id: tgId
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            // Если Telegram ID не найден или другая ошибка
+            if (response.status === 404) {
+                throw new Error('Telegram ID не найден в системе');
+            }
+            throw new Error(data.message || 'Ошибка при отправке запроса');
+        }
+        
+        return { 
+            success: true, 
+            message: data.message || 'Запрос отправлен! Проверьте уведомления в Telegram'
+        };
+        
+    } catch (error) {
+        console.error('Password reset request error:', error);
+        return {
+            success: false,
+            message: error.message || 'Не удалось отправить запрос. Проверьте соединение с интернетом'
+        };
+    }
+}
+
+// Настройка UI для переключения между формами входа и смены пароля
+function setupPasswordResetUI() {
+    const toPasswordResetBtn = document.getElementById('toPasswordResetBtn');
+    const backToLoginBtn = document.getElementById('backToLoginBtn');
+    const loginSection = document.getElementById('loginSection');
+    const passwordResetSection = document.getElementById('passwordResetSection');
+    const resetTelegramIdInput = document.getElementById('resetTelegramIdInput');
+    const telegramIdInput = document.getElementById('telegramIdInput');
+    const passwordResetForm = document.getElementById('passwordResetForm');
+    const resetSubmitBtn = document.getElementById('resetSubmitBtn');
+    const resetError = document.getElementById('resetError');
+    const resetSuccess = document.getElementById('resetSuccess');
+    
+    // Кнопка "Сменить пароль"
+    toPasswordResetBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        loginSection.classList.add('hidden');
+        passwordResetSection.classList.remove('hidden');
+        
+        // Если Telegram ID уже введен, подставляем его
+        if (telegramIdInput.value) {
+            resetTelegramIdInput.value = telegramIdInput.value;
+        }
+        resetTelegramIdInput.focus();
+    });
+    
+    // Кнопка "Вернуться"
+    backToLoginBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        passwordResetSection.classList.add('hidden');
+        loginSection.classList.remove('hidden');
+        
+        // Очищаем ошибки и сообщения
+        resetError.textContent = '';
+        resetError.classList.add('hidden');
+        resetSuccess.textContent = '';
+        resetSuccess.classList.add('hidden');
+        resetSubmitBtn.disabled = false;
+        resetSubmitBtn.textContent = 'Отправить запрос в бот';
+        
+        telegramIdInput.focus();
+    });
+    
+    // Обработчик формы смены пароля
+    passwordResetForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const tgId = resetTelegramIdInput.value.trim();
+        
+        if (!tgId) {
+            resetError.textContent = 'Пожалуйста, введите ваш Telegram ID';
+            resetError.classList.remove('hidden');
+            resetSuccess.classList.add('hidden');
+            return;
+        }
+        
+        // Очищаем предыдущие сообщения
+        resetError.classList.add('hidden');
+        resetSuccess.classList.add('hidden');
+        resetSubmitBtn.disabled = true;
+        resetSubmitBtn.textContent = 'Ожидайте подтверждения в Telegram...';
+        
+        // Отправляем запрос
+        const result = await requestPasswordReset(tgId);
+        
+        if (result.success) {
+            resetSuccess.textContent = result.message;
+            resetSuccess.classList.remove('hidden');
+            
+            // Через 3 секунды закрываем модальное окно автоматически
+            setTimeout(() => {
+                document.getElementById('login-overlay').classList.remove('show');
+            }, 3000);
+        } else {
+            resetError.textContent = result.message;
+            resetError.classList.remove('hidden');
+        }
+        
+        resetSubmitBtn.disabled = false;
+        resetSubmitBtn.textContent = 'Отправить запрос в бот';
+    });
 }
 
 // Запускаем проверку только если мы не в Telegram (там вход по факту открытия)

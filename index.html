@@ -127,30 +127,60 @@
 
   <div id="login-overlay" class="login-overlay" role="dialog" aria-labelledby="LoginTitle">
     <div class="login-modal">
-      <h2 id="LoginTitle">Вход в систему</h2>
-      <form id="loginForm">
-        <div class="form-group">
-          <label for="telegramIdInput">Telegram ID:</label>
-          <input 
-            id="telegramIdInput" 
-            type="number" 
-            placeholder="Введите ваш Telegram ID" 
-            required 
-            inputmode="numeric"
-          />
+      <!-- Форма входа -->
+      <div id="loginSection" class="login-section">
+        <h2 id="LoginTitle">Вход в систему</h2>
+        <form id="loginForm">
+          <div class="form-group">
+            <label for="telegramIdInput">Telegram ID:</label>
+            <input 
+              id="telegramIdInput" 
+              type="number" 
+              placeholder="Введите ваш Telegram ID" 
+              required 
+              inputmode="numeric"
+            />
+          </div>
+          <div class="form-group">
+            <label for="passwordInput">Пароль:</label>
+            <input 
+              id="passwordInput" 
+              type="password" 
+              placeholder="Введите ваш пароль" 
+              required 
+            />
+          </div>
+          <div class="form-error hidden" id="loginError" role="alert"></div>
+          <button type="submit" class="login-btn">Войти</button>
+        </form>
+        <div class="login-footer">
+          <button id="toPasswordResetBtn" type="button" class="link-btn">Сменить пароль через бота</button>
         </div>
-        <div class="form-group">
-          <label for="passwordInput">Пароль:</label>
-          <input 
-            id="passwordInput" 
-            type="password" 
-            placeholder="Введите ваш пароль" 
-            required 
-          />
+      </div>
+
+      <!-- Форма запроса смены пароля -->
+      <div id="passwordResetSection" class="login-section hidden">
+        <h2>Запрос смены пароля</h2>
+        <form id="passwordResetForm">
+          <div class="form-group">
+            <label for="resetTelegramIdInput">Telegram ID:</label>
+            <input 
+              id="resetTelegramIdInput" 
+              type="number" 
+              placeholder="Введите ваш Telegram ID" 
+              required 
+              inputmode="numeric"
+            />
+          </div>
+          <p class="hint-text">Отправьте запрос в бота для подтверждения. Вы получите ссылку для создания нового пароля.</p>
+          <div class="form-error hidden" id="resetError" role="alert"></div>
+          <div class="form-success hidden" id="resetSuccess" role="status"></div>
+          <button type="submit" class="login-btn" id="resetSubmitBtn">Отправить запрос в бот</button>
+        </form>
+        <div class="login-footer">
+          <button id="backToLoginBtn" type="button" class="link-btn">Вернуться ко входу</button>
         </div>
-        <div class="form-error hidden" id="loginError" role="alert"></div>
-        <button type="submit" class="login-btn">Войти</button>
-      </form>
+      </div>
     </div>
   </div>
 
