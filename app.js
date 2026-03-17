@@ -133,40 +133,66 @@ function showLoginModal() {
 const PASSWORD_RESET_API_URL = 'https://mexvcooxruzxrntvhzmc.supabase.co/functions/v1/request-password-reset';
 
 // Функция запроса смены пароля
-async function requestPasswordReset(tgId) {
-    try {
-        const response = await fetch(PASSWORD_RESET_API_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                telegram_id: tgId
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok) {
-            // Если Telegram ID не найден или другая ошибка
-            if (response.status === 404) {
-                throw new Error('Telegram ID не найден в системе');
+async function requestPasswordReset(tgId, submitBtn) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            // Отправляем POST запрос
+            const response = await fetch(PASSWORD_RESET_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    telegram_id: tgId
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                // Если Telegram ID не найден или другая ошибка
+                if (response.status === 404) {
+                    reject(new Error('Telegram ID не найден в системе'));
+                    return;
+                }
+                reject(new Error(data.message || 'Ошибка при отправке запроса'));
+                return;
             }
-            throw new Error(data.message || 'Ошибка при отправке запроса');
+            
+            // После успешной отправки блокируем кнопку и меняем текст
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Ожидание подтверждения в TG...';
+            
+            // Начинаем polling каждые 3 секунды
+            const intervalId = setInterval(async () => {
+                try {
+                    const checkResponse = await fetch(`${PASSWORD_RESET_API_URL}?check=true&tgId=${tgId}`);
+                    const checkData = await checkResponse.json();
+                    
+                    if (checkData.status === 'approved') {
+                        clearInterval(intervalId);
+                        resolve({ success: true, message: 'Доступ одобрен!' });
+                    } else if (checkData.status === 'denied') {
+                        clearInterval(intervalId);
+                        reject(new Error('В доступе отказано'));
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                    // Продолжаем polling при ошибке сети
+                }
+            }, 3000);
+            
+            // Тайм-аут на 2 минуты
+            setTimeout(() => {
+                clearInterval(intervalId);
+                reject(new Error('Время ожидания истекло. Попробуйте еще раз.'));
+            }, 120000);
+            
+        } catch (error) {
+            console.error('Password reset request error:', error);
+            reject(new Error(error.message || 'Не удалось отправить запрос. Проверьте соединение с интернетом'));
         }
-        
-        return { 
-            success: true, 
-            message: data.message || 'Запрос отправлен! Проверьте уведомления в Telegram'
-        };
-        
-    } catch (error) {
-        console.error('Password reset request error:', error);
-        return {
-            success: false,
-            message: error.message || 'Не удалось отправить запрос. Проверьте соединение с интернетом'
-        };
-    }
+    });
 }
 
 // Настройка UI для переключения между формами входа и смены пароля
@@ -228,22 +254,25 @@ function setupPasswordResetUI() {
         // Очищаем предыдущие сообщения
         resetError.classList.add('hidden');
         resetSuccess.classList.add('hidden');
-        resetSubmitBtn.disabled = true;
-        resetSubmitBtn.textContent = 'Ожидайте подтверждения в Telegram...';
         
-        // Отправляем запрос
-        const result = await requestPasswordReset(tgId);
-        
-        if (result.success) {
-            resetSuccess.textContent = result.message;
-            resetSuccess.classList.remove('hidden');
+        try {
+            // Отправляем запрос
+            const result = await requestPasswordReset(tgId, resetSubmitBtn);
             
-            // Через 3 секунды закрываем модальное окно автоматически
-            setTimeout(() => {
-                document.getElementById('login-overlay').classList.remove('show');
-            }, 3000);
-        } else {
-            resetError.textContent = result.message;
+            if (result.success) {
+                resetSuccess.textContent = result.message;
+                resetSuccess.classList.remove('hidden');
+                
+                // Через 3 секунды закрываем модальное окно автоматически
+                setTimeout(() => {
+                    document.getElementById('login-overlay').classList.remove('show');
+                }, 3000);
+            } else {
+                resetError.textContent = result.message;
+                resetError.classList.remove('hidden');
+            }
+        } catch (error) {
+            resetError.textContent = error.message;
             resetError.classList.remove('hidden');
         }
         
