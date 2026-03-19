@@ -135,8 +135,13 @@ const PASSWORD_RESET_API_URL = 'https://mexvcooxruzxrntvhzmc.supabase.co/functio
 // Функция запроса смены пароля
 async function requestPasswordReset(tgId, submitBtn) {
     return new Promise(async (resolve, reject) => {
+        if (!tgId) {
+            reject(new Error('tgId не указан'));
+            return;
+        }
+
         try {
-            // Отправляем POST запрос
+            // Отправляем POST запрос на запрос сброса
             const response = await fetch(PASSWORD_RESET_API_URL, {
                 method: 'POST',
                 headers: {
@@ -146,48 +151,63 @@ async function requestPasswordReset(tgId, submitBtn) {
                     telegram_id: tgId
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (!response.ok) {
-                // Если Telegram ID не найден или другая ошибка
                 if (response.status === 404) {
                     reject(new Error('Telegram ID не найден в системе'));
                     return;
                 }
-                reject(new Error(data.message || 'Ошибка при отправке запроса'));
+                reject(new Error(data?.message || 'Ошибка при отправке запроса'));
                 return;
             }
-            
-            // После успешной отправки блокируем кнопку и меняем текст
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Ожидание подтверждения в TG...';
-            
-            // Начинаем polling каждые 3 секунды
+
+            // Сообщаем пользователю о начале ожидания
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Ожидание подтверждения в TG...';
+            }
+
+            // Polling каждые 3 секунды по check=true
             const intervalId = setInterval(async () => {
                 try {
-                    const checkResponse = await fetch(`${PASSWORD_RESET_API_URL}?check=true&tgId=${tgId}`);
+                    const checkResponse = await fetch(`${PASSWORD_RESET_API_URL}?check=true&tgId=${encodeURIComponent(tgId)}`);
                     const checkData = await checkResponse.json();
-                    
-                    if (checkData.status === 'approved') {
+
+                    if (checkData?.status === 'approved') {
                         clearInterval(intervalId);
                         resolve({ success: true, message: 'Доступ одобрен!' });
-                    } else if (checkData.status === 'denied') {
+                    } else if (checkData?.status === 'denied') {
                         clearInterval(intervalId);
                         reject(new Error('В доступе отказано'));
+                    } else {
+                        // pending / неизвестно -> ждём дальше
+                        console.info('В ожидании ответа админа', tgId, checkData?.status);
                     }
                 } catch (error) {
                     console.error('Polling error:', error);
-                    // Продолжаем polling при ошибке сети
                 }
             }, 3000);
-            
-            // Тайм-аут на 2 минуты
-            setTimeout(() => {
+
+            // Таймаут через 2 минуты
+            const timeoutId = setTimeout(() => {
                 clearInterval(intervalId);
                 reject(new Error('Время ожидания истекло. Попробуйте еще раз.'));
             }, 120000);
-            
+
+            // Очистка, если resolve/reject произойдёт раньше
+            const cleanup = () => {
+                clearInterval(intervalId);
+                clearTimeout(timeoutId);
+            };
+
+            const oldResolve = resolve;
+            const oldReject = reject;
+
+            resolve = (value) => { cleanup(); oldResolve(value); };
+            reject = (err) => { cleanup(); oldReject(err); };
+
         } catch (error) {
             console.error('Password reset request error:', error);
             reject(new Error(error.message || 'Не удалось отправить запрос. Проверьте соединение с интернетом'));
