@@ -529,17 +529,52 @@ async function loadTelegramTasks() {
       const boardTaskIdRaw = event.target?.dataset?.boardTaskId;
 
       if (action === 'edit') {
-        const nextText = prompt('Новый текст задачи', text);
-        if (nextText === null) return;
-        const clean = nextText.trim();
-        if (!clean) return;
+        const titleSpan = li.querySelector('.telegram-task-title');
+        const originalHTML = titleSpan.innerHTML;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'telegram-task-input';
+        input.value = text;
+        titleSpan.replaceWith(input);
+        input.focus();
+        input.select();
 
-        const { error: updErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(clean, target) });
-        if (updErr) {
-          alert(`Ошибка редактирования: ${updErr.message}`);
-          return;
-        }
-        await loadTelegramTasks();
+        let saved = false;
+
+        const save = async () => {
+          if (saved) return;
+          saved = true;
+          const newText = input.value.trim();
+          if (!newText) {
+            input.replaceWith(titleSpan);
+            return;
+          }
+          const { error: updErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(newText, target) });
+          if (updErr) {
+            alert(`Ошибка редактирования: ${updErr.message}`);
+            input.replaceWith(titleSpan);
+            return;
+          }
+          await loadTelegramTasks();
+        };
+
+        const cancel = () => {
+          if (saved) return;
+          saved = true;
+          input.replaceWith(titleSpan);
+        };
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            save();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancel();
+          }
+        });
+
+        input.addEventListener('blur', () => save());
         return;
       }
 
