@@ -505,9 +505,8 @@ async function loadTelegramTasks() {
         <small class="telegram-task-target">${targetLabel}</small>
       </div>
       <div class="telegram-task-actions">
-        <button type="button" data-action="edit">Ред.</button>
+        <button type="button" data-action="edit" class="telegram-task-edit">✏️</button>
         <button type="button" data-action="to-day">В день</button>
-        <button type="button" data-action="to-board">На доску</button>
         <button type="button" data-action="delete">Удалить</button>
       </div>
       <div class="telegram-transfer-menu hidden" data-menu="day"></div>

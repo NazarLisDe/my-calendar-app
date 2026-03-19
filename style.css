@@ -795,6 +795,11 @@ main {
   cursor: pointer;
 }
 
+.telegram-task-edit {
+  border: 0 !important;
+  padding: 0 !important;
+}
+
 .telegram-transfer-menu {
   margin-top: 6px;
   display: flex;
