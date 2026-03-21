@@ -17,7 +17,21 @@ const tg = window.Telegram?.WebApp;
 const telegramUser = tg?.initDataUnsafe?.user;
 
 // 3. Пытаемся взять ID либо из Telegram, либо из памяти браузера
-let currentUserId = telegramUser?.id || localStorage.getItem('tg_user_id');
+const AUTH_STORAGE_KEYS = ['tg_user_id', 'tg_id'];
+
+function getStoredTelegramUserId() {
+  for (const key of AUTH_STORAGE_KEYS) {
+    const value = localStorage.getItem(key);
+    if (value) return value;
+  }
+  return null;
+}
+
+function isUserAuthenticated() {
+  return Boolean(telegramUser?.id || getStoredTelegramUserId() || localStorage.getItem('is_auth') === 'true');
+}
+
+let currentUserId = telegramUser?.id || getStoredTelegramUserId();
 
 // Константы Supabase (должны быть перед checkAuth)
 const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL;
@@ -93,6 +107,8 @@ function showLoginModal() {
             
             // Успешный вход
             localStorage.setItem('tg_user_id', telegramId);
+            localStorage.setItem('tg_id', telegramId);
+            localStorage.setItem('is_auth', 'true');
             currentUserId = telegramId;
             
             // Скрываем модальное окно
@@ -445,6 +461,11 @@ async function deleteTelegramTask(taskId) {
 async function loadTelegramTasks() {
   const list = document.getElementById('telegramTasksList');
   if (!list) return;
+
+  if (!currentUserId || !isUserAuthenticated()) {
+    list.innerHTML = '<li>Войдите, чтобы увидеть личные задачи из Telegram.</li>';
+    return;
+  }
 
   if (!window.supabase) {
     list.innerHTML = '<li>Supabase SDK не загружен.</li>';
@@ -953,6 +974,23 @@ function setSpaceMenuOpen(open) {
   const toggle = document.getElementById('spaceMenuToggle');
   menu.classList.toggle('hidden', !open);
   toggle.setAttribute('aria-expanded', String(open));
+}
+
+function syncLogoutButtonVisibility() {
+  const logoutButton = document.getElementById('logout-btn');
+  if (!logoutButton) return;
+  logoutButton.classList.toggle('hidden', !isUserAuthenticated());
+}
+
+function handleLogout() {
+  const confirmed = window.confirm('Вы уверены, что хотите выйти ?');
+  if (!confirmed) return;
+
+  AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+  localStorage.removeItem('is_auth');
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(LEGACY_STORAGE_KEY);
+  location.reload();
 }
 
 function updateSpaceButton(spaceKey, st = effectiveState()) {
@@ -1924,6 +1962,11 @@ document.getElementById('toggleInstructions').addEventListener('click', () => {
   if (isInstructionsOpen) setHistoryOpen(false);
 });
 
+const logoutButton = document.getElementById('logout-btn');
+if (logoutButton) {
+  logoutButton.addEventListener('click', handleLogout);
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (isHistoryOpen) setHistoryOpen(false);
@@ -2318,5 +2361,6 @@ setInstructionsOpen(false);
 setSpaceMenuOpen(false);
 setDockMenuOpen(false);
 setNotesPanelOpen(false);
+syncLogoutButtonVisibility();
 renderAll();
 loadTelegramTasks();
