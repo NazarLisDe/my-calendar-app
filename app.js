@@ -333,6 +333,7 @@ const TELEGRAM_TARGET = {
 const TELEGRAM_REQUEST_TIMEOUT_MS = 12000;
 const TELEGRAM_RETRY_COUNT = 1;
 const USER_SETTINGS_TABLE = 'user_settings';
+const USER_SPACES_TABLE = 'user_spaces';
 
 const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -479,6 +480,118 @@ async function loadCurrentSpacePreference() {
 
   const preferredSpace = data?.current_space_id;
   return typeof preferredSpace === 'string' && preferredSpace.trim() ? preferredSpace.trim() : null;
+}
+
+function normalizeUserSpaceRecord(record) {
+  if (!record || typeof record !== 'object') return null;
+
+  const rawKey = record.space_id ?? record.space_key ?? record.slug ?? record.id ?? null;
+  const key = typeof rawKey === 'string' && rawKey.trim() ? rawKey.trim() : null;
+  if (!key) return null;
+
+  const rawName = record.space_name ?? record.name ?? record.title ?? null;
+  const name = typeof rawName === 'string' && rawName.trim()
+    ? rawName.trim()
+    : (SPACES[key] || key);
+
+  return { key, name };
+}
+
+function buildAvailableSpacesFromState(st = state) {
+  return Object.keys(st.spaces || {}).map((key) => ({
+    key,
+    name: st.spaceNames?.[key] || SPACES[key] || key
+  }));
+}
+
+function syncSpacesWithState(spaces, st = state) {
+  const nextSpaces = Array.isArray(spaces) && spaces.length > 0
+    ? spaces
+    : buildAvailableSpacesFromState(st);
+
+  nextSpaces.forEach(({ key, name }) => {
+    if (!key) return;
+    if (!st.spaces[key]) st.spaces[key] = createSpaceState();
+    if (!st.spaceNames) st.spaceNames = { ...SPACES };
+    st.spaceNames[key] = name || SPACES[key] || key;
+  });
+
+  return nextSpaces;
+}
+
+let availableSpaces = [];
+
+async function loadUserSpaces() {
+  if (!supabaseClient || !currentUserId || !isUserAuthenticated()) {
+    return buildAvailableSpacesFromState(state);
+  }
+
+  const { data, error } = await runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from(USER_SPACES_TABLE)
+      .select('*')
+      .eq('user_id', String(currentUserId))
+      .abortSignal(signal),
+    'Ошибка загрузки пространств пользователя.'
+  );
+
+  if (error) {
+    console.warn('Не удалось загрузить список пространств из Supabase:', error);
+    return buildAvailableSpacesFromState(state);
+  }
+
+  const normalizedSpaces = Array.isArray(data)
+    ? data.map(normalizeUserSpaceRecord).filter(Boolean)
+    : [];
+
+  return normalizedSpaces.length > 0 ? normalizedSpaces : buildAvailableSpacesFromState(state);
+}
+
+async function insertUserSpace(spaceKey, spaceName) {
+  if (!supabaseClient || !currentUserId || !isUserAuthenticated() || !spaceKey) return true;
+
+  const payload = {
+    user_id: String(currentUserId),
+    space_id: String(spaceKey),
+    space_name: String(spaceName || SPACES[spaceKey] || spaceKey)
+  };
+
+  const { error } = await runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from(USER_SPACES_TABLE)
+      .insert(payload)
+      .abortSignal(signal),
+    'Ошибка сохранения пространства пользователя.'
+  );
+
+  if (error) {
+    console.warn('Не удалось сохранить пространство в Supabase:', error);
+    return false;
+  }
+
+  return true;
+}
+
+async function deleteUserSpaces(spaceKeys = []) {
+  const keys = Array.isArray(spaceKeys) ? spaceKeys.filter(Boolean) : [];
+  if (!supabaseClient || !currentUserId || !isUserAuthenticated() || keys.length === 0) return true;
+
+  const { error } = await runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from(USER_SPACES_TABLE)
+      .delete()
+      .eq('user_id', String(currentUserId))
+      .in('space_id', keys.map(String))
+      .abortSignal(signal),
+    'Ошибка удаления пространства пользователя.'
+  );
+
+  if (error) {
+    console.warn('Не удалось удалить пространство из Supabase:', error);
+    return false;
+  }
+
+  return true;
 }
 
 async function persistCurrentSpacePreference(spaceId) {
@@ -765,6 +878,7 @@ const defaultState = () => ({
 });
 
 let state = loadState();
+availableSpaces = syncSpacesWithState(buildAvailableSpacesFromState(state), state);
 let history = [{ description: 'Старт', snapshot: structuredClone(state), ts: new Date().toISOString() }];
 let currentHistoryIndex = 0;
 let previewIndex = null;
@@ -897,7 +1011,8 @@ function getGlobalSideNotes(st = effectiveState()) {
 }
 
 function getSpaceLabel(key, st = effectiveState()) {
-  return st.spaceNames?.[key] || SPACES[key] || key;
+  const availableLabel = availableSpaces.find((space) => space.key === key)?.name;
+  return availableLabel || st.spaceNames?.[key] || SPACES[key] || key;
 }
 
 function getTaskById(taskId, s = state) {
@@ -1053,13 +1168,16 @@ function renderSpaceOptions(st = effectiveState()) {
   const list = document.querySelector('#spaceMenu .space-list');
   if (!list) return;
   list.innerHTML = '';
-  Object.keys(st.spaces || {}).forEach((key) => {
+  const spaceItems = Array.isArray(availableSpaces) && availableSpaces.length > 0
+    ? availableSpaces
+    : buildAvailableSpacesFromState(st);
+  spaceItems.forEach(({ key, name }) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'space-option';
     btn.dataset.space = key;
     btn.setAttribute('role', 'menuitem');
-    btn.textContent = getSpaceLabel(key, st);
+    btn.textContent = name || getSpaceLabel(key, st);
     if (selectedSpaceKeys.has(key)) btn.classList.add('selected');
     list.append(btn);
   });
@@ -1891,9 +2009,13 @@ function createSpaceKey(name, st = state) {
     .toLowerCase()
     .replace(/[^a-zа-я0-9]+/gi, '-')
     .replace(/^-+|-+$/g, '') || 'space';
+  const existingKeys = new Set([
+    ...Object.keys(st.spaces || {}),
+    ...availableSpaces.map((space) => space.key)
+  ]);
   let key = base;
   let index = 2;
-  while (key in st.spaces) {
+  while (existingKeys.has(key)) {
     key = `${base}-${index++}`;
   }
   return key;
@@ -1913,17 +2035,28 @@ function switchSpace(nextSpace) {
 
 const addSpaceForm = document.getElementById('addSpaceForm');
 if (addSpaceForm) {
-  addSpaceForm.addEventListener('submit', (e) => {
+  addSpaceForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = addSpaceForm.spaceName.value.trim();
     if (!name) return;
     const key = createSpaceKey(name);
+
+    const saved = await insertUserSpace(key, name);
+    if (!saved) {
+      alert('Не удалось сохранить пространство в Supabase. Пространство не создано.');
+      return;
+    }
+
     commit(`Добавлено пространство «${name}»`, (st) => {
       st.spaces[key] = createSpaceState();
       if (!st.spaceNames) st.spaceNames = { ...SPACES };
       st.spaceNames[key] = name;
       st.activeSpace = key;
     });
+    availableSpaces = syncSpacesWithState([
+      ...availableSpaces.filter((space) => space.key !== key),
+      { key, name }
+    ], state);
     addSpaceForm.reset();
     setSpaceMenuOpen(true);
     currentBoardTaskId = null;
@@ -2147,10 +2280,16 @@ if (spaceActionExport) {
 }
 
 if (spaceActionDelete) {
-  spaceActionDelete.addEventListener('click', () => {
+  spaceActionDelete.addEventListener('click', async () => {
     const targets = getSpaceActionSelection();
     if (targets.length === 0) {
       setSpaceActionMenuOpen(false);
+      return;
+    }
+
+    const removedFromSupabase = await deleteUserSpaces(targets);
+    if (!removedFromSupabase) {
+      alert('Не удалось удалить пространство из Supabase.');
       return;
     }
 
@@ -2174,6 +2313,10 @@ if (spaceActionDelete) {
 
       currentBoardTaskId = null;
     });
+    availableSpaces = syncSpacesWithState(
+      availableSpaces.filter((space) => !targets.includes(space.key)),
+      state
+    );
     clearSpaceSelection();
     setSpaceActionMenuOpen(false);
   });
@@ -2205,11 +2348,22 @@ if (importSpaceBtn && importSpaceInput) {
       return;
     }
 
+    const saved = await insertUserSpace(target, label);
+    if (!saved) {
+      alert('Не удалось сохранить импортированное пространство в Supabase.');
+      importSpaceInput.value = '';
+      return;
+    }
+
     commit(`Импортировано пространство в «${label}»`, (st) => {
       if (!st.spaceNames) st.spaceNames = { ...SPACES };
       st.spaceNames[target] = label;
       st.spaces[target] = imported;
     });
+    availableSpaces = syncSpacesWithState([
+      ...availableSpaces.filter((space) => space.key !== target),
+      { key: target, name: label }
+    ], state);
     importSpaceInput.value = '';
   });
 }
@@ -2413,6 +2567,7 @@ setNotesPanelOpen(false);
 syncLogoutButtonVisibility();
 
 async function initializeApp() {
+  availableSpaces = syncSpacesWithState(await loadUserSpaces(), state);
   const localPreferredSpace = state.activeSpace && state.activeSpace in state.spaces
     ? state.activeSpace
     : null;
@@ -2421,6 +2576,8 @@ async function initializeApp() {
     ? supabasePreferredSpace
     : localPreferredSpace && localPreferredSpace in state.spaces
       ? localPreferredSpace
+      : availableSpaces[0]?.key && availableSpaces[0].key in state.spaces
+        ? availableSpaces[0].key
       : 'management';
 
   if (state.activeSpace !== initialSpace) {
