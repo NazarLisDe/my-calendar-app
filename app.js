@@ -750,7 +750,7 @@ function createSpaceState() {
 
 const defaultState = () => ({
   theme: 'light',
-  activeSpace: 'management',
+  activeSpace: null,
   nextTaskId: 1,
   nextCloudId: 1,
   nextGroupId: 1,
@@ -2413,9 +2413,18 @@ setNotesPanelOpen(false);
 syncLogoutButtonVisibility();
 
 async function initializeApp() {
-  const preferredSpace = await loadCurrentSpacePreference();
-  if (preferredSpace && preferredSpace in state.spaces) {
-    state.activeSpace = preferredSpace;
+  const localPreferredSpace = state.activeSpace && state.activeSpace in state.spaces
+    ? state.activeSpace
+    : null;
+  const supabasePreferredSpace = await loadCurrentSpacePreference();
+  const initialSpace = supabasePreferredSpace && supabasePreferredSpace in state.spaces
+    ? supabasePreferredSpace
+    : localPreferredSpace && localPreferredSpace in state.spaces
+      ? localPreferredSpace
+      : 'management';
+
+  if (state.activeSpace !== initialSpace) {
+    state.activeSpace = initialSpace;
     persist();
     history = [{ description: 'Старт', snapshot: structuredClone(state), ts: new Date().toISOString() }];
     currentHistoryIndex = 0;
