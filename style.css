@@ -115,6 +115,24 @@ button:hover { border-color: var(--accent); }
   margin-bottom: 8px;
 }
 
+.logout-btn {
+  width: 100%;
+  margin-bottom: 8px;
+  border-color: color-mix(in srgb, #d43c3c 35%, var(--border));
+  background: color-mix(in srgb, #d43c3c 12%, var(--surface));
+  color: #b42318;
+  font-weight: 600;
+}
+
+.logout-btn:hover {
+  border-color: #d43c3c;
+  background: color-mix(in srgb, #d43c3c 18%, var(--surface));
+}
+
+:root[data-theme='dark'] .logout-btn {
+  color: #ff8a80;
+}
+
 .add-space-form {
   display: flex;
   gap: 6px;
