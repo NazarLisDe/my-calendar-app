@@ -332,6 +332,7 @@ const TELEGRAM_TARGET = {
 
 const TELEGRAM_REQUEST_TIMEOUT_MS = 12000;
 const TELEGRAM_RETRY_COUNT = 1;
+const USER_SETTINGS_TABLE = 'user_settings';
 
 const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -456,6 +457,50 @@ async function deleteTelegramTask(taskId) {
       .abortSignal(signal),
     'Ошибка удаления задачи из Supabase.'
   );
+}
+
+async function loadCurrentSpacePreference() {
+  if (!supabaseClient || !currentUserId || !isUserAuthenticated()) return null;
+
+  const { data, error } = await runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from(USER_SETTINGS_TABLE)
+      .select('current_space_id')
+      .eq('tg_id', String(currentUserId))
+      .maybeSingle()
+      .abortSignal(signal),
+    'Ошибка загрузки настроек пользователя.'
+  );
+
+  if (error) {
+    console.warn('Не удалось загрузить current_space_id из Supabase:', error);
+    return null;
+  }
+
+  const preferredSpace = data?.current_space_id;
+  return typeof preferredSpace === 'string' && preferredSpace.trim() ? preferredSpace.trim() : null;
+}
+
+async function persistCurrentSpacePreference(spaceId) {
+  if (!supabaseClient || !currentUserId || !isUserAuthenticated() || !spaceId) return;
+
+  const { error } = await runTelegramSupabaseRequest(
+    (signal) => supabaseClient
+      .from(USER_SETTINGS_TABLE)
+      .upsert(
+        {
+          tg_id: String(currentUserId),
+          current_space_id: String(spaceId)
+        },
+        { onConflict: 'tg_id' }
+      )
+      .abortSignal(signal),
+    'Ошибка сохранения настроек пользователя.'
+  );
+
+  if (error) {
+    console.warn('Не удалось сохранить current_space_id в Supabase:', error);
+  }
 }
 
 async function loadTelegramTasks() {
@@ -912,8 +957,12 @@ function ensureBoard(st, taskId) {
 }
 
 function commit(description, mutator) {
+  const previousActiveSpace = state.activeSpace;
   mutator(state);
   persist();
+  if (previousActiveSpace !== state.activeSpace) {
+    void persistCurrentSpacePreference(state.activeSpace);
+  }
   if (previewIndex !== null) previewIndex = null;
   history = history.slice(0, currentHistoryIndex + 1);
   history.push({ description, snapshot: structuredClone(state), ts: new Date().toISOString() });
@@ -2362,5 +2411,19 @@ setSpaceMenuOpen(false);
 setDockMenuOpen(false);
 setNotesPanelOpen(false);
 syncLogoutButtonVisibility();
-renderAll();
-loadTelegramTasks();
+
+async function initializeApp() {
+  const preferredSpace = await loadCurrentSpacePreference();
+  if (preferredSpace && preferredSpace in state.spaces) {
+    state.activeSpace = preferredSpace;
+    persist();
+    history = [{ description: 'Старт', snapshot: structuredClone(state), ts: new Date().toISOString() }];
+    currentHistoryIndex = 0;
+    previewIndex = null;
+  }
+
+  renderAll();
+  loadTelegramTasks();
+}
+
+initializeApp();
