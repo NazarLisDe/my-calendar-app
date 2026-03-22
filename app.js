@@ -558,14 +558,25 @@ async function loadUserSpaces() {
 
 async function insertUserSpace(spaceKey, spaceName) {
   const supabaseClient = getSupabaseClient();
-  if (!supabaseClient || !currentUserId || !isUserAuthenticated() || !spaceKey) return true;
+  if (!supabaseClient || !isUserAuthenticated() || !spaceKey) return true;
+
+  const newId = String(spaceKey);
+  const tg_id = currentUserId;
+
+  if (tg_id == null) {
+    alert('Ошибка: Вы не авторизованы. Пожалуйста, введите ID заново');
+    return false;
+  }
 
   const payload = {
-    id: String(spaceKey),
-    tg_id: String(currentUserId),
-    user_id: String(currentUserId),
+    id: newId,
+    tg_id: String(tg_id),
+    user_id: String(tg_id),
     name: String(spaceName || spaceKey)
   };
+
+  console.log('DEBUG: Твой TG_ID сейчас:', tg_id);
+  console.log('DEBUG: Данные для отправки:', { id: newId, user_id: tg_id, name: spaceName });
 
   const { error } = await runTelegramSupabaseRequest(
     (signal) => supabaseClient
@@ -577,6 +588,7 @@ async function insertUserSpace(spaceKey, spaceName) {
 
   if (error) {
     console.warn('Не удалось сохранить пространство в Supabase:', error);
+    alert(`Не удалось сохранить пространство: ${error.message || 'Неизвестная ошибка сервера.'}`);
     return false;
   }
 
@@ -2057,7 +2069,6 @@ if (addSpaceForm) {
 
     const saved = await insertUserSpace(key, name);
     if (!saved) {
-      alert('Не удалось сохранить пространство в Supabase. Пространство не создано.');
       return;
     }
 
@@ -2367,7 +2378,6 @@ if (importSpaceBtn && importSpaceInput) {
     for (const importedSpace of importedSpaces) {
       const saved = await insertUserSpace(importedSpace.key, importedSpace.name);
       if (!saved) {
-        alert(`Не удалось сохранить пространство ${importedSpace.name} в Supabase.`);
         importSpaceInput.value = '';
         return;
       }
