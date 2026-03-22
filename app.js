@@ -1,13 +1,9 @@
 const DAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
-const SPACES = {
-  management: 'Управление',
-  notes: 'Заметки'
-};
 
 const STORAGE_KEY = 'calendar-board-state-v2';
 const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
 
-// ... (выше DAYS, SPACES и т.д.)
+// ... (выше DAYS и т.д.)
 
 // 1. Инициализация Supabase (убедитесь, что она выше!)
 // const supabase = createClient(...) 
@@ -485,14 +481,14 @@ async function loadCurrentSpacePreference() {
 function normalizeUserSpaceRecord(record) {
   if (!record || typeof record !== 'object') return null;
 
-  const rawKey = record.space_id ?? record.space_key ?? record.slug ?? record.id ?? null;
+  const rawKey = record.id ?? record.space_id ?? record.space_key ?? record.slug ?? null;
   const key = typeof rawKey === 'string' && rawKey.trim() ? rawKey.trim() : null;
   if (!key) return null;
 
   const rawName = record.space_name ?? record.name ?? record.title ?? null;
   const name = typeof rawName === 'string' && rawName.trim()
     ? rawName.trim()
-    : (SPACES[key] || key);
+    : key;
 
   return { key, name };
 }
@@ -500,21 +496,32 @@ function normalizeUserSpaceRecord(record) {
 function buildAvailableSpacesFromState(st = state) {
   return Object.keys(st.spaces || {}).map((key) => ({
     key,
-    name: st.spaceNames?.[key] || SPACES[key] || key
+    name: st.spaceNames?.[key] || key
   }));
 }
 
 function syncSpacesWithState(spaces, st = state) {
-  const nextSpaces = Array.isArray(spaces) && spaces.length > 0
-    ? spaces
-    : buildAvailableSpacesFromState(st);
+  const nextSpaces = Array.isArray(spaces) ? spaces.filter((space) => space?.key) : buildAvailableSpacesFromState(st);
+  const nextKeys = new Set(nextSpaces.map(({ key }) => key));
+
+  if (!st.spaceNames) st.spaceNames = {};
+
+  Object.keys(st.spaces || {}).forEach((key) => {
+    if (!nextKeys.has(key)) delete st.spaces[key];
+  });
+
+  Object.keys(st.spaceNames).forEach((key) => {
+    if (!nextKeys.has(key)) delete st.spaceNames[key];
+  });
 
   nextSpaces.forEach(({ key, name }) => {
-    if (!key) return;
     if (!st.spaces[key]) st.spaces[key] = createSpaceState();
-    if (!st.spaceNames) st.spaceNames = { ...SPACES };
-    st.spaceNames[key] = name || SPACES[key] || key;
+    st.spaceNames[key] = name || key;
   });
+
+  if (!(st.activeSpaceId in st.spaces)) {
+    st.activeSpaceId = nextSpaces[0]?.key || null;
+  }
 
   return nextSpaces;
 }
@@ -551,9 +558,9 @@ async function insertUserSpace(spaceKey, spaceName) {
   if (!supabaseClient || !currentUserId || !isUserAuthenticated() || !spaceKey) return true;
 
   const payload = {
+    id: String(spaceKey),
     user_id: String(currentUserId),
-    space_id: String(spaceKey),
-    space_name: String(spaceName || SPACES[spaceKey] || spaceKey)
+    name: String(spaceName || spaceKey)
   };
 
   const { error } = await runTelegramSupabaseRequest(
@@ -581,7 +588,7 @@ async function deleteUserSpaces(spaceKeys = []) {
       .from(USER_SPACES_TABLE)
       .delete()
       .eq('user_id', String(currentUserId))
-      .in('space_id', keys.map(String))
+      .in('id', keys.map(String))
       .abortSignal(signal),
     'Ошибка удаления пространства пользователя.'
   );
@@ -616,7 +623,7 @@ async function persistCurrentSpacePreference(spaceId) {
   }
 }
 
-async function loadTelegramTasks() {
+async function fetchTasks() {
   const list = document.getElementById('telegramTasksList');
   if (!list) return;
 
@@ -637,22 +644,21 @@ async function loadTelegramTasks() {
 
   list.innerHTML = '<li>Загрузка задач...</li>';
 
+  const activeSpaceId = state.activeSpaceId;
+
+  if (!activeSpaceId) {
+    list.innerHTML = '<li>Нет доступных пространств.</li>';
+    return;
+  }
+
   const { data, error } = await runTelegramSupabaseRequest(
-    (signal) => {
-      // Создаем основу запроса
-      let query = supabaseClient
-        .from('tasks')
-        .select('id, text, is_completed, created_at, user_id');
-
-      // Применяем фильтр по ID из Telegram (из 13-й строки), если он есть
-      if (currentUserId) {
-        query = query.eq('user_id', currentUserId);
-      }
-
-      return query
-        .order('created_at', { ascending: false })
-        .abortSignal(signal);
-    },
+    (signal) => supabaseClient
+      .from('tasks')
+      .select('*')
+      .eq('user_id', String(currentUserId))
+      .eq('column_id', activeSpaceId)
+      .order('created_at', { ascending: false })
+      .abortSignal(signal),
     'Ошибка загрузки задач из Supabase.'
   );
 
@@ -734,7 +740,7 @@ async function loadTelegramTasks() {
             input.replaceWith(titleSpan);
             return;
           }
-          await loadTelegramTasks();
+          await fetchTasks();
         };
 
         const cancel = () => {
@@ -764,7 +770,7 @@ async function loadTelegramTasks() {
           alert(`Ошибка удаления: ${delErr.message}`);
           return;
         }
-        await loadTelegramTasks();
+        await fetchTasks();
         return;
       }
 
@@ -808,7 +814,7 @@ async function loadTelegramTasks() {
 
         const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.day) });
         if (mvErr) alert(`Задача добавлена в день, но не обновлён тип в Supabase: ${mvErr.message}`);
-        await loadTelegramTasks();
+        await fetchTasks();
         return;
       }
 
@@ -841,7 +847,7 @@ async function loadTelegramTasks() {
 
         const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.board) });
         if (mvErr) alert(`Задача добавлена на доску, но не обновлён тип в Supabase: ${mvErr.message}`);
-        await loadTelegramTasks();
+        await fetchTasks();
       }
     });
 
@@ -863,18 +869,15 @@ function createSpaceState() {
 
 const defaultState = () => ({
   theme: 'light',
-  activeSpace: null,
+  activeSpaceId: null,
   nextTaskId: 1,
   nextCloudId: 1,
   nextGroupId: 1,
   nextTaskGroupId: 1,
   nextSideNoteId: 1,
   sideNotes: [],
-  spaceNames: { ...SPACES },
-  spaces: {
-    management: createSpaceState(),
-    notes: createSpaceState()
-  }
+  spaceNames: {},
+  spaces: {}
 });
 
 let state = loadState();
@@ -958,9 +961,6 @@ function loadState() {
       for (const [key, value] of Object.entries(parsed.spaces)) {
         mergedSpaces[key] = { ...createSpaceState(), ...(value || {}) };
       }
-      if (!mergedSpaces.management) mergedSpaces.management = createSpaceState();
-      if (!mergedSpaces.notes) mergedSpaces.notes = createSpaceState();
-
       const mergedSideNotes = Array.isArray(parsed.sideNotes)
         ? parsed.sideNotes
         : Object.values(mergedSpaces).flatMap((space) => Array.isArray(space.sideNotes) ? space.sideNotes : []);
@@ -969,6 +969,7 @@ function loadState() {
         ...base,
         ...parsed,
         sideNotes: mergedSideNotes,
+        activeSpaceId: parsed.activeSpaceId ?? parsed.activeSpace ?? base.activeSpaceId,
         spaceNames: { ...base.spaceNames, ...(parsed.spaceNames || {}) },
         spaces: mergedSpaces
       };
@@ -978,18 +979,8 @@ function loadState() {
       ...base,
       ...parsed,
       sideNotes: Array.isArray(parsed.sideNotes) ? parsed.sideNotes : [],
-      spaces: {
-        management: {
-          days: parsed.days || createSpaceState().days,
-          dayBackgrounds: parsed.dayBackgrounds || createSpaceState().dayBackgrounds,
-          dayNotes: parsed.dayNotes || createSpaceState().dayNotes,
-          boards: parsed.boards || {},
-          dockTasks: parsed.dockTasks || [],
-          taskGroups: parsed.taskGroups || [],
-          sideNotes: parsed.sideNotes || []
-        },
-        notes: createSpaceState()
-      }
+      activeSpaceId: parsed.activeSpaceId ?? parsed.activeSpace ?? null,
+      spaces: {}
     };
   } catch {
     return defaultState();
@@ -1001,8 +992,9 @@ function persist() {
 }
 
 function getActiveSpace(st = effectiveState()) {
-  const key = st.activeSpace in st.spaces ? st.activeSpace : 'management';
-  return st.spaces[key] || st.spaces.management;
+  const fallbackKey = Object.keys(st.spaces || {})[0] || null;
+  const key = st.activeSpaceId in st.spaces ? st.activeSpaceId : fallbackKey;
+  return (key && st.spaces[key]) || createSpaceState();
 }
 
 function getGlobalSideNotes(st = effectiveState()) {
@@ -1012,7 +1004,7 @@ function getGlobalSideNotes(st = effectiveState()) {
 
 function getSpaceLabel(key, st = effectiveState()) {
   const availableLabel = availableSpaces.find((space) => space.key === key)?.name;
-  return availableLabel || st.spaceNames?.[key] || SPACES[key] || key;
+  return availableLabel || st.spaceNames?.[key] || key;
 }
 
 function getTaskById(taskId, s = state) {
@@ -1072,11 +1064,12 @@ function ensureBoard(st, taskId) {
 }
 
 function commit(description, mutator) {
-  const previousActiveSpace = state.activeSpace;
+  const previousActiveSpace = state.activeSpaceId;
   mutator(state);
   persist();
-  if (previousActiveSpace !== state.activeSpace) {
-    void persistCurrentSpacePreference(state.activeSpace);
+  if (previousActiveSpace !== state.activeSpaceId) {
+    void persistCurrentSpacePreference(state.activeSpaceId);
+    void fetchTasks();
   }
   if (previewIndex !== null) previewIndex = null;
   history = history.slice(0, currentHistoryIndex + 1);
@@ -1162,6 +1155,7 @@ function updateSpaceButton(spaceKey, st = effectiveState()) {
   document.getElementById('spaceMenuToggle').textContent = `Пространство: ${label}`;
   const current = document.getElementById('spaceMenuCurrentLabel');
   if (current) current.textContent = label;
+  document.title = label ? `${label} — Календарь` : 'Календарь';
 }
 
 function renderSpaceOptions(st = effectiveState()) {
@@ -1665,7 +1659,7 @@ function renderCalendar() {
   });
 
   renderSpaceOptions(s);
-  updateSpaceButton(s.activeSpace, s);
+  updateSpaceButton(s.activeSpaceId, s);
   applyTheme(s.theme);
 }
 
@@ -2004,27 +1998,10 @@ document.getElementById('spaceMenuToggle').addEventListener('click', () => {
 });
 
 
-function createSpaceKey(name, st = state) {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-zа-я0-9]+/gi, '-')
-    .replace(/^-+|-+$/g, '') || 'space';
-  const existingKeys = new Set([
-    ...Object.keys(st.spaces || {}),
-    ...availableSpaces.map((space) => space.key)
-  ]);
-  let key = base;
-  let index = 2;
-  while (existingKeys.has(key)) {
-    key = `${base}-${index++}`;
-  }
-  return key;
-}
-
 function switchSpace(nextSpace) {
   if (!(nextSpace in state.spaces)) return;
   commit(`Переключено пространство на «${getSpaceLabel(nextSpace, state)}»`, (st) => {
-    st.activeSpace = nextSpace;
+    st.activeSpaceId = nextSpace;
   });
   setSpaceMenuOpen(false);
   clearSpaceSelection();
@@ -2039,7 +2016,7 @@ if (addSpaceForm) {
     e.preventDefault();
     const name = addSpaceForm.spaceName.value.trim();
     if (!name) return;
-    const key = createSpaceKey(name);
+    const key = crypto.randomUUID();
 
     const saved = await insertUserSpace(key, name);
     if (!saved) {
@@ -2049,9 +2026,9 @@ if (addSpaceForm) {
 
     commit(`Добавлено пространство «${name}»`, (st) => {
       st.spaces[key] = createSpaceState();
-      if (!st.spaceNames) st.spaceNames = { ...SPACES };
+      if (!st.spaceNames) st.spaceNames = {};
       st.spaceNames[key] = name;
-      st.activeSpace = key;
+      st.activeSpaceId = key;
     });
     availableSpaces = syncSpacesWithState([
       ...availableSpaces.filter((space) => space.key !== key),
@@ -2252,7 +2229,7 @@ if (spaceActionCopy) {
     const payload = {
       name: getSpaceLabel(spaceActionTargetKey, state),
       spaceKey: spaceActionTargetKey,
-      data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpace: spaceActionTargetKey }))
+      data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpaceId: spaceActionTargetKey }))
     };
     const text = JSON.stringify(payload, null, 2);
     try {
@@ -2272,7 +2249,7 @@ if (spaceActionExport) {
       name: getSpaceLabel(spaceActionTargetKey, state),
       spaceKey: spaceActionTargetKey,
       exportedAt: new Date().toISOString(),
-      data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpace: spaceActionTargetKey }))
+      data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpaceId: spaceActionTargetKey }))
     };
     downloadJson(`space-${spaceActionTargetKey}.json`, payload);
     setSpaceActionMenuOpen(false);
@@ -2294,7 +2271,7 @@ if (spaceActionDelete) {
     }
 
     commit(targets.length > 1 ? `Удалено/очищено пространств: ${targets.length}` : (targets[0] === 'management' || targets[0] === 'notes') ? `Очищено пространство «${getSpaceLabel(targets[0], state)}»` : `Удалено пространство «${getSpaceLabel(targets[0], state)}»`, (st) => {
-      if (!st.spaceNames) st.spaceNames = { ...SPACES };
+      if (!st.spaceNames) st.spaceNames = {};
 
       targets.forEach((target) => {
         if (!(target in st.spaces)) return;
@@ -2303,12 +2280,10 @@ if (spaceActionDelete) {
       });
 
       if (Object.keys(st.spaces).length === 0) {
-        st.spaces.management = createSpaceState();
-        st.spaceNames.management = SPACES.management;
       }
 
-      if (!(st.activeSpace in st.spaces)) {
-        st.activeSpace = st.spaces.management ? 'management' : Object.keys(st.spaces)[0];
+      if (!(st.activeSpaceId in st.spaces)) {
+        st.activeSpaceId = Object.keys(st.spaces)[0] || null;
       }
 
       currentBoardTaskId = null;
@@ -2338,9 +2313,9 @@ if (importSpaceBtn && importSpaceInput) {
     }
 
     const imported = normalizeImportedSpaceData(parsed.data || parsed);
-    const fallbackKey = parsed.name ? `import-${Date.now()}` : state.activeSpace;
+    const fallbackKey = parsed.name ? crypto.randomUUID() : state.activeSpaceId;
     const target = typeof parsed.spaceKey === 'string' && parsed.spaceKey.trim() ? parsed.spaceKey.trim() : fallbackKey;
-    const label = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : (SPACES[target] || target);
+    const label = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : target;
 
     if (target in state.spaces) {
       alert('Импортированное пространство не будет импортировано, если оно уже существует в списке.');
@@ -2356,7 +2331,7 @@ if (importSpaceBtn && importSpaceInput) {
     }
 
     commit(`Импортировано пространство в «${label}»`, (st) => {
-      if (!st.spaceNames) st.spaceNames = { ...SPACES };
+      if (!st.spaceNames) st.spaceNames = {};
       st.spaceNames[target] = label;
       st.spaces[target] = imported;
     });
@@ -2568,8 +2543,8 @@ syncLogoutButtonVisibility();
 
 async function initializeApp() {
   availableSpaces = syncSpacesWithState(await loadUserSpaces(), state);
-  const localPreferredSpace = state.activeSpace && state.activeSpace in state.spaces
-    ? state.activeSpace
+  const localPreferredSpace = state.activeSpaceId && state.activeSpaceId in state.spaces
+    ? state.activeSpaceId
     : null;
   const supabasePreferredSpace = await loadCurrentSpacePreference();
   const initialSpace = supabasePreferredSpace && supabasePreferredSpace in state.spaces
@@ -2578,10 +2553,10 @@ async function initializeApp() {
       ? localPreferredSpace
       : availableSpaces[0]?.key && availableSpaces[0].key in state.spaces
         ? availableSpaces[0].key
-      : 'management';
+      : null;
 
-  if (state.activeSpace !== initialSpace) {
-    state.activeSpace = initialSpace;
+  if (state.activeSpaceId !== initialSpace) {
+    state.activeSpaceId = initialSpace;
     persist();
     history = [{ description: 'Старт', snapshot: structuredClone(state), ts: new Date().toISOString() }];
     currentHistoryIndex = 0;
@@ -2589,7 +2564,8 @@ async function initializeApp() {
   }
 
   renderAll();
-  loadTelegramTasks();
+  fetchTasks();
 }
 
 initializeApp();
+
