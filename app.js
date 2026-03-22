@@ -24,10 +24,11 @@ function getStoredTelegramUserId() {
 }
 
 function isUserAuthenticated() {
-  return Boolean(telegramUser?.id || getStoredTelegramUserId() || localStorage.getItem('is_auth') === 'true');
+  return Boolean(currentUserId || telegramUser?.id || getStoredTelegramUserId());
 }
 
 let currentUserId = telegramUser?.id || getStoredTelegramUserId();
+let authResolution = null;
 
 // Константы Supabase (должны быть перед checkAuth)
 const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL;
@@ -35,16 +36,17 @@ const SUPABASE_ANON_KEY = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SU
 
 // 4. Функция самой проверки
 async function checkAuth() {
-    // Если зашли через обычный браузер и еще не логинились
-    if (!currentUserId) {
-        // Показываем модальное окно входа
-        showLoginModal();
-    }
+    if (currentUserId) return currentUserId;
+    return showLoginModal();
 }
 
 // Функция показа модального окна входа
 function showLoginModal() {
+    if (authResolution?.promise) return authResolution.promise;
+
     const overlay = document.getElementById('login-overlay');
+    authResolution = {};
+    authResolution.promise = new Promise((resolve) => { authResolution.resolve = resolve; });
     const form = document.getElementById('loginForm');
     const errorElement = document.getElementById('loginError');
     const submitBtn = form.querySelector('button[type="submit"]');
@@ -113,8 +115,8 @@ function showLoginModal() {
             submitBtn.textContent = 'Войти';
             submitBtn.disabled = false;
             
-            // Перезагружаем страницу или продолжаем инициализацию
-            location.reload();
+            if (authResolution?.resolve) authResolution.resolve(telegramId);
+            authResolution = null;
             
         } catch (err) {
             console.error('Login error:', err);
@@ -130,15 +132,12 @@ function showLoginModal() {
         errorElement.classList.remove('hidden');
     }
     
-    // Удаляем старые обработчики (если есть)
-    const newForm = form.cloneNode(true);
-    form.parentNode.replaceChild(newForm, form);
-    
-    // Добавляем новый обработчик
-    document.getElementById('loginForm').addEventListener('submit', handleSubmit);
+    form.onsubmit = handleSubmit;
     
     // Настраиваем UI для смены пароля
     setupPasswordResetUI();
+
+    return authResolution.promise;
 }
 
 // API эндпоинт для запроса смены пароля (заглушка - вставить реальный адрес)
@@ -313,10 +312,6 @@ function setupPasswordResetUI() {
     });
 }
 
-// Запускаем проверку только если мы не в Telegram (там вход по факту открытия)
-if (!telegramUser?.id) {
-    checkAuth();
-}
 
 console.log('Active User ID:', currentUserId);
 
@@ -331,15 +326,18 @@ const TELEGRAM_RETRY_COUNT = 1;
 const USER_SETTINGS_TABLE = 'user_settings';
 const USER_SPACES_TABLE = 'user_spaces';
 
-const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
-  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: {
-        headers: { 
-          'x-user-id': String(currentUserId) 
-        }
+function getSupabaseClient() {
+  if (!window.supabase || !SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+
+  return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: {
+      headers: {
+        'x-user-id': String(currentUserId || ''),
+        'x-tg-id': String(currentUserId || '')
       }
-    })
-  : null;
+    }
+  });
+}
 
 function stripTelegramTargetMarker(text = '') {
   return text.replace(/^\[(?:NOTES|DAY|BOARD)\]\s*/i, '').trim();
@@ -431,6 +429,7 @@ async function runTelegramSupabaseRequest(buildRequest, fallbackMessage) {
 }
 
 async function updateTelegramTask(taskId, updates) {
+  const supabaseClient = getSupabaseClient();
   if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
 
   return runTelegramSupabaseRequest(
@@ -444,6 +443,7 @@ async function updateTelegramTask(taskId, updates) {
 }
 
 async function deleteTelegramTask(taskId) {
+  const supabaseClient = getSupabaseClient();
   if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
 
   return runTelegramSupabaseRequest(
@@ -457,6 +457,7 @@ async function deleteTelegramTask(taskId) {
 }
 
 async function loadCurrentSpacePreference() {
+  const supabaseClient = getSupabaseClient();
   if (!supabaseClient || !currentUserId || !isUserAuthenticated()) return null;
 
   const { data, error } = await runTelegramSupabaseRequest(
@@ -529,6 +530,7 @@ function syncSpacesWithState(spaces, st = state) {
 let availableSpaces = [];
 
 async function loadUserSpaces() {
+  const supabaseClient = getSupabaseClient();
   if (!supabaseClient || !currentUserId || !isUserAuthenticated()) {
     return buildAvailableSpacesFromState(state);
   }
@@ -537,7 +539,7 @@ async function loadUserSpaces() {
     (signal) => supabaseClient
       .from(USER_SPACES_TABLE)
       .select('*')
-      .eq('user_id', String(currentUserId))
+      .eq('tg_id', String(currentUserId))
       .abortSignal(signal),
     'Ошибка загрузки пространств пользователя.'
   );
@@ -551,14 +553,16 @@ async function loadUserSpaces() {
     ? data.map(normalizeUserSpaceRecord).filter(Boolean)
     : [];
 
-  return normalizedSpaces.length > 0 ? normalizedSpaces : buildAvailableSpacesFromState(state);
+  return normalizedSpaces;
 }
 
 async function insertUserSpace(spaceKey, spaceName) {
+  const supabaseClient = getSupabaseClient();
   if (!supabaseClient || !currentUserId || !isUserAuthenticated() || !spaceKey) return true;
 
   const payload = {
     id: String(spaceKey),
+    tg_id: String(currentUserId),
     user_id: String(currentUserId),
     name: String(spaceName || spaceKey)
   };
@@ -580,6 +584,7 @@ async function insertUserSpace(spaceKey, spaceName) {
 }
 
 async function deleteUserSpaces(spaceKeys = []) {
+  const supabaseClient = getSupabaseClient();
   const keys = Array.isArray(spaceKeys) ? spaceKeys.filter(Boolean) : [];
   if (!supabaseClient || !currentUserId || !isUserAuthenticated() || keys.length === 0) return true;
 
@@ -587,7 +592,7 @@ async function deleteUserSpaces(spaceKeys = []) {
     (signal) => supabaseClient
       .from(USER_SPACES_TABLE)
       .delete()
-      .eq('user_id', String(currentUserId))
+      .eq('tg_id', String(currentUserId))
       .in('id', keys.map(String))
       .abortSignal(signal),
     'Ошибка удаления пространства пользователя.'
@@ -602,6 +607,7 @@ async function deleteUserSpaces(spaceKeys = []) {
 }
 
 async function persistCurrentSpacePreference(spaceId) {
+  const supabaseClient = getSupabaseClient();
   if (!supabaseClient || !currentUserId || !isUserAuthenticated() || !spaceId) return;
 
   const { error } = await runTelegramSupabaseRequest(
@@ -651,11 +657,11 @@ async function fetchTasks() {
     return;
   }
 
+  const supabaseClient = getSupabaseClient();
   const { data, error } = await runTelegramSupabaseRequest(
     (signal) => supabaseClient
       .from('tasks')
       .select('*')
-      .eq('user_id', String(currentUserId))
       .eq('column_id', activeSpaceId)
       .order('created_at', { ascending: false })
       .abortSignal(signal),
@@ -1388,16 +1394,47 @@ function setSpaceActionMenuOpen(open, x = 0, y = 0) {
 }
 
 function normalizeImportedSpaceData(raw) {
+  const source = raw && typeof raw === 'object' && raw.data && typeof raw.data === 'object' ? raw.data : raw;
   const base = createSpaceState();
-  if (!raw || typeof raw !== 'object') return base;
+  if (!source || typeof source !== 'object') return base;
   return {
-    days: { ...base.days, ...(raw.days || {}) },
-    dayBackgrounds: { ...base.dayBackgrounds, ...(raw.dayBackgrounds || {}) },
-    dayNotes: { ...base.dayNotes, ...(raw.dayNotes || {}) },
-    boards: { ...base.boards, ...(raw.boards || {}) },
-    dockTasks: Array.isArray(raw.dockTasks) ? raw.dockTasks : [],
-    taskGroups: Array.isArray(raw.taskGroups) ? raw.taskGroups : []
+    days: { ...base.days, ...(source.days || {}) },
+    dayBackgrounds: { ...base.dayBackgrounds, ...(source.dayBackgrounds || {}) },
+    dayNotes: { ...base.dayNotes, ...(source.dayNotes || {}) },
+    boards: { ...base.boards, ...(source.boards || {}) },
+    dockTasks: Array.isArray(source.dockTasks) ? source.dockTasks : [],
+    taskGroups: Array.isArray(source.taskGroups) ? source.taskGroups : [],
+    sideNotes: Array.isArray(source.sideNotes) ? source.sideNotes : []
   };
+}
+
+function extractImportedSpaces(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+
+  const normalizeEntry = (entry, fallbackId = null) => {
+    if (!entry || typeof entry !== 'object') return null;
+    const importedIdCandidates = [entry.id, entry.spaceId, entry.spaceKey, entry.data?.id, entry.data?.spaceId, entry.data?.spaceKey, fallbackId];
+    const key = importedIdCandidates.find((value) => typeof value === 'string' && value.trim())?.trim();
+    if (!key) return null;
+
+    const label = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : key;
+    return {
+      key,
+      name: label,
+      data: normalizeImportedSpaceData(entry)
+    };
+  };
+
+  if (Array.isArray(payload.spaces)) {
+    return payload.spaces.map((entry) => normalizeEntry(entry)).filter(Boolean);
+  }
+
+  if (payload.spaces && typeof payload.spaces === 'object') {
+    return Object.entries(payload.spaces).map(([spaceId, entry]) => normalizeEntry(entry, spaceId)).filter(Boolean);
+  }
+
+  const singleEntry = normalizeEntry(payload);
+  return singleEntry ? [singleEntry] : [];
 }
 
 function downloadJson(filename, payload) {
@@ -2312,32 +2349,45 @@ if (importSpaceBtn && importSpaceInput) {
       return;
     }
 
-    const imported = normalizeImportedSpaceData(parsed.data || parsed);
-    const fallbackKey = parsed.name ? crypto.randomUUID() : state.activeSpaceId;
-    const target = typeof parsed.spaceKey === 'string' && parsed.spaceKey.trim() ? parsed.spaceKey.trim() : fallbackKey;
-    const label = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : target;
+    const importedSpaces = extractImportedSpaces(parsed);
 
-    if (target in state.spaces) {
-      alert('Импортированное пространство не будет импортировано, если оно уже существует в списке.');
+    if (importedSpaces.length === 0) {
+      alert('В файле не найдено ни одного пространства для импорта.');
       importSpaceInput.value = '';
       return;
     }
 
-    const saved = await insertUserSpace(target, label);
-    if (!saved) {
-      alert('Не удалось сохранить импортированное пространство в Supabase.');
+    const duplicateSpace = importedSpaces.find(({ key }) => key in state.spaces);
+    if (duplicateSpace) {
+      alert(`Пространство с ID ${duplicateSpace.key} уже существует и не будет импортировано.`);
       importSpaceInput.value = '';
       return;
     }
 
-    commit(`Импортировано пространство в «${label}»`, (st) => {
-      if (!st.spaceNames) st.spaceNames = {};
-      st.spaceNames[target] = label;
-      st.spaces[target] = imported;
-    });
+    for (const importedSpace of importedSpaces) {
+      const saved = await insertUserSpace(importedSpace.key, importedSpace.name);
+      if (!saved) {
+        alert(`Не удалось сохранить пространство ${importedSpace.name} в Supabase.`);
+        importSpaceInput.value = '';
+        return;
+      }
+    }
+
+    commit(
+      importedSpaces.length > 1
+        ? `Импортировано пространств: ${importedSpaces.length}`
+        : `Импортировано пространство в «${importedSpaces[0].name}»`,
+      (st) => {
+        if (!st.spaceNames) st.spaceNames = {};
+        importedSpaces.forEach(({ key, name, data }) => {
+          st.spaceNames[key] = name;
+          st.spaces[key] = data;
+        });
+      }
+    );
     availableSpaces = syncSpacesWithState([
-      ...availableSpaces.filter((space) => space.key !== target),
-      { key: target, name: label }
+      ...availableSpaces.filter((space) => !importedSpaces.some((item) => item.key === space.key)),
+      ...importedSpaces.map(({ key, name }) => ({ key, name }))
     ], state);
     importSpaceInput.value = '';
   });
@@ -2541,7 +2591,23 @@ setDockMenuOpen(false);
 setNotesPanelOpen(false);
 syncLogoutButtonVisibility();
 
+async function ensureTelegramUserId() {
+  currentUserId = telegramUser?.id || getStoredTelegramUserId() || null;
+  if (currentUserId) {
+    localStorage.setItem('tg_user_id', String(currentUserId));
+    localStorage.setItem('tg_id', String(currentUserId));
+    return currentUserId;
+  }
+
+  return checkAuth();
+}
+
 async function initializeApp() {
+  const resolvedUserId = await ensureTelegramUserId();
+  if (!resolvedUserId) {
+    return;
+  }
+
   availableSpaces = syncSpacesWithState(await loadUserSpaces(), state);
   const localPreferredSpace = state.activeSpaceId && state.activeSpaceId in state.spaces
     ? state.activeSpaceId
