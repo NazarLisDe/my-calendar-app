@@ -539,7 +539,7 @@ async function loadUserSpaces() {
     (signal) => supabaseClient
       .from(USER_SPACES_TABLE)
       .select('*')
-      .eq('tg_id', String(currentUserId))
+      .eq('user_id', String(currentUserId))
       .abortSignal(signal),
     'Ошибка загрузки пространств пользователя.'
   );
@@ -570,7 +570,10 @@ async function insertUserSpace(spaceKey, spaceName) {
 
   const payload = {
     id: newId,
+<<<<<<< codex/fix-insertuserspace-error-handling-3rb1ht
+=======
     tg_id: String(tg_id),
+>>>>>>> main
     user_id: String(tg_id),
     name: String(spaceName || spaceKey)
   };
@@ -604,7 +607,7 @@ async function deleteUserSpaces(spaceKeys = []) {
     (signal) => supabaseClient
       .from(USER_SPACES_TABLE)
       .delete()
-      .eq('tg_id', String(currentUserId))
+      .eq('user_id', String(currentUserId))
       .in('id', keys.map(String))
       .abortSignal(signal),
     'Ошибка удаления пространства пользователя.'
