@@ -570,6 +570,10 @@ async function insertUserSpace(spaceKey, spaceName) {
 
   const payload = {
     id: newId,
+<<<<<<< codex/fix-insertuserspace-error-handling-3rb1ht
+=======
+    tg_id: String(tg_id),
+>>>>>>> main
     user_id: String(tg_id),
     name: String(spaceName || spaceKey)
   };
