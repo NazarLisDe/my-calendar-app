@@ -529,6 +529,13 @@ function syncSpacesWithState(spaces, st = state) {
 
 let availableSpaces = [];
 
+function resolveSpaceId(spaceKey) {
+  const rawKey = typeof spaceKey === 'string' ? spaceKey.trim() : '';
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (rawKey && uuidPattern.test(rawKey)) return rawKey;
+  return crypto.randomUUID();
+}
+
 async function loadUserSpaces() {
   const supabaseClient = getSupabaseClient();
   if (!supabaseClient || !currentUserId || !isUserAuthenticated()) {
@@ -546,6 +553,15 @@ async function loadUserSpaces() {
 
   if (error) {
     console.warn('Не удалось загрузить список пространств из Supabase:', error);
+    AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    localStorage.removeItem('is_auth');
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    currentUserId = null;
+    state = defaultState();
+    availableSpaces = [];
+    syncLogoutButtonVisibility();
+    await showLoginModal();
     return buildAvailableSpacesFromState(state);
   }
 
@@ -558,22 +574,18 @@ async function loadUserSpaces() {
 
 async function insertUserSpace(spaceKey, spaceName) {
   const supabaseClient = getSupabaseClient();
-  if (!supabaseClient || !isUserAuthenticated() || !spaceKey) return true;
+  if (!supabaseClient || !isUserAuthenticated()) return null;
 
-  const newId = String(spaceKey);
+  const newId = resolveSpaceId(spaceKey);
   const tg_id = currentUserId;
 
   if (tg_id == null) {
     alert('Ошибка: Вы не авторизованы. Пожалуйста, введите ID заново');
-    return false;
+    return null;
   }
 
   const payload = {
     id: newId,
-<<<<<<< codex/fix-insertuserspace-error-handling-3rb1ht
-=======
-    tg_id: String(tg_id),
->>>>>>> main
     user_id: String(tg_id),
     name: String(spaceName || spaceKey)
   };
@@ -592,10 +604,10 @@ async function insertUserSpace(spaceKey, spaceName) {
   if (error) {
     console.warn('Не удалось сохранить пространство в Supabase:', error);
     alert(`Не удалось сохранить пространство: ${error.message || 'Неизвестная ошибка сервера.'}`);
-    return false;
+    return null;
   }
 
-  return true;
+  return newId;
 }
 
 async function deleteUserSpaces(spaceKeys = []) {
@@ -2068,10 +2080,8 @@ if (addSpaceForm) {
     e.preventDefault();
     const name = addSpaceForm.spaceName.value.trim();
     if (!name) return;
-    const key = crypto.randomUUID();
-
-    const saved = await insertUserSpace(key, name);
-    if (!saved) {
+    const key = await insertUserSpace(crypto.randomUUID(), name);
+    if (!key) {
       return;
     }
 
@@ -2371,36 +2381,41 @@ if (importSpaceBtn && importSpaceInput) {
       return;
     }
 
-    const duplicateSpace = importedSpaces.find(({ key }) => key in state.spaces);
+    const remappedImportedSpaces = importedSpaces.map((space) => ({
+      ...space,
+      key: resolveSpaceId(space.key)
+    }));
+    const duplicateSpace = remappedImportedSpaces.find(({ key }) => key in state.spaces);
     if (duplicateSpace) {
       alert(`Пространство с ID ${duplicateSpace.key} уже существует и не будет импортировано.`);
       importSpaceInput.value = '';
       return;
     }
 
-    for (const importedSpace of importedSpaces) {
-      const saved = await insertUserSpace(importedSpace.key, importedSpace.name);
-      if (!saved) {
+    for (const importedSpace of remappedImportedSpaces) {
+      const savedKey = await insertUserSpace(importedSpace.key, importedSpace.name);
+      if (!savedKey) {
         importSpaceInput.value = '';
         return;
       }
+      importedSpace.key = savedKey;
     }
 
     commit(
-      importedSpaces.length > 1
-        ? `Импортировано пространств: ${importedSpaces.length}`
-        : `Импортировано пространство в «${importedSpaces[0].name}»`,
+      remappedImportedSpaces.length > 1
+        ? `Импортировано пространств: ${remappedImportedSpaces.length}`
+        : `Импортировано пространство в «${remappedImportedSpaces[0].name}»`,
       (st) => {
         if (!st.spaceNames) st.spaceNames = {};
-        importedSpaces.forEach(({ key, name, data }) => {
+        remappedImportedSpaces.forEach(({ key, name, data }) => {
           st.spaceNames[key] = name;
           st.spaces[key] = data;
         });
       }
     );
     availableSpaces = syncSpacesWithState([
-      ...availableSpaces.filter((space) => !importedSpaces.some((item) => item.key === space.key)),
-      ...importedSpaces.map(({ key, name }) => ({ key, name }))
+      ...availableSpaces.filter((space) => !remappedImportedSpaces.some((item) => item.key === space.key)),
+      ...remappedImportedSpaces.map(({ key, name }) => ({ key, name }))
     ], state);
     importSpaceInput.value = '';
   });
@@ -2647,4 +2662,3 @@ async function initializeApp() {
 }
 
 initializeApp();
-
