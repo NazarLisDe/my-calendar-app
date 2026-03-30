@@ -479,6 +479,18 @@ async function loadCurrentSpacePreference() {
   return typeof preferredSpace === 'string' && preferredSpace.trim() ? preferredSpace.trim() : null;
 }
 
+function findSpaceKeyByName(spaceName, st = state) {
+  const expectedName = typeof spaceName === 'string' ? spaceName.trim().toLowerCase() : '';
+  if (!expectedName) return null;
+
+  const spaceEntries = Object.entries(st.spaceNames || {});
+  const matched = spaceEntries.find(([, name]) => typeof name === 'string' && name.trim().toLowerCase() === expectedName);
+  if (matched?.[0]) return matched[0];
+
+  const fallbackEntry = Object.keys(st.spaces || {}).find((key) => key.trim().toLowerCase() === expectedName);
+  return fallbackEntry || null;
+}
+
 function normalizeUserSpaceRecord(record) {
   if (!record || typeof record !== 'object') return null;
 
@@ -886,6 +898,42 @@ async function fetchTasks() {
 
     list.append(li);
   });
+}
+
+
+let tasksRealtimeChannel = null;
+
+function unsubscribeFromTasksRealtime() {
+  const supabaseClient = getSupabaseClient();
+
+  if (tasksRealtimeChannel && supabaseClient) {
+    supabaseClient.removeChannel(tasksRealtimeChannel);
+  }
+
+  tasksRealtimeChannel = null;
+}
+
+function subscribeToTasksRealtime() {
+  unsubscribeFromTasksRealtime();
+
+  const supabaseClient = getSupabaseClient();
+  if (!supabaseClient || !currentUserId || !isUserAuthenticated()) return;
+
+  tasksRealtimeChannel = supabaseClient
+    .channel(`tasks-realtime-${String(currentUserId)}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'tasks',
+        filter: `user_id=eq.${String(currentUserId)}`
+      },
+      () => {
+        void fetchTasks();
+      }
+    )
+    .subscribe();
 }
 
 function createSpaceState() {
@@ -2637,17 +2685,23 @@ async function initializeApp() {
   }
 
   availableSpaces = syncSpacesWithState(await loadUserSpaces(), state);
-  const localPreferredSpace = state.activeSpaceId && state.activeSpaceId in state.spaces
-    ? state.activeSpaceId
-    : null;
   const supabasePreferredSpace = await loadCurrentSpacePreference();
+  const localStoragePreferredSpace = localStorage.getItem('preferred_space_id') || localStorage.getItem('activeSpaceId');
+  const localPreferredSpace = typeof localStoragePreferredSpace === 'string' && localStoragePreferredSpace in state.spaces
+    ? localStoragePreferredSpace
+    : state.activeSpaceId && state.activeSpaceId in state.spaces
+      ? state.activeSpaceId
+      : null;
+  const defaultTasksSpace = findSpaceKeyByName('Режим задач', state);
   const initialSpace = supabasePreferredSpace && supabasePreferredSpace in state.spaces
     ? supabasePreferredSpace
     : localPreferredSpace && localPreferredSpace in state.spaces
       ? localPreferredSpace
-      : availableSpaces[0]?.key && availableSpaces[0].key in state.spaces
-        ? availableSpaces[0].key
-      : null;
+      : defaultTasksSpace && defaultTasksSpace in state.spaces
+        ? defaultTasksSpace
+        : availableSpaces[0]?.key && availableSpaces[0].key in state.spaces
+          ? availableSpaces[0].key
+          : null;
 
   if (state.activeSpaceId !== initialSpace) {
     state.activeSpaceId = initialSpace;
@@ -2659,6 +2713,7 @@ async function initializeApp() {
 
   renderAll();
   fetchTasks();
+  subscribeToTasksRealtime();
 }
 
 initializeApp();
