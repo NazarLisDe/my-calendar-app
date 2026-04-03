@@ -689,19 +689,14 @@ async function fetchTasks() {
 
   list.innerHTML = '<li>Загрузка задач...</li>';
 
-  const activeSpaceId = state.activeSpaceId;
-
-  if (!activeSpaceId) {
-    list.innerHTML = '<li>Нет доступных пространств.</li>';
-    return;
-  }
+  const INBOX_COLUMN_ID = '228d2d4f-415d-4fbc-b8a2-d1a201938bd9';
 
   const supabaseClient = getSupabaseClient();
   const { data, error } = await runTelegramSupabaseRequest(
     (signal) => supabaseClient
       .from('tasks')
       .select('*')
-      .eq('column_id', activeSpaceId)
+      .eq('column_id', INBOX_COLUMN_ID)
       .order('created_at', { ascending: false })
       .abortSignal(signal),
     'Ошибка загрузки задач из Supabase.'
