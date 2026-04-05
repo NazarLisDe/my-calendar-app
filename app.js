@@ -144,10 +144,14 @@ function showLoginModal() {
 const PASSWORD_RESET_API_URL = 'https://mexvcooxruzxrntvhzmc.supabase.co/functions/v1/request-password-reset';
 
 // Функция запроса смены пароля
-async function requestPasswordReset(tgId, submitBtn) {
+async function requestPasswordReset(tgId, newPassword, submitBtn) {
     return new Promise(async (resolve, reject) => {
         if (!tgId) {
             reject(new Error('tgId не указан'));
+            return;
+        }
+        if (!newPassword) {
+            reject(new Error('Новый пароль не указан'));
             return;
         }
 
@@ -159,7 +163,8 @@ async function requestPasswordReset(tgId, submitBtn) {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    telegram_id: tgId
+                    telegram_id: tgId,
+                    new_password: newPassword
                 })
             });
 
@@ -233,6 +238,7 @@ function setupPasswordResetUI() {
     const loginSection = document.getElementById('loginSection');
     const passwordResetSection = document.getElementById('passwordResetSection');
     const resetTelegramIdInput = document.getElementById('resetTelegramIdInput');
+    const resetNewPasswordInput = document.getElementById('resetNewPasswordInput');
     const telegramIdInput = document.getElementById('telegramIdInput');
     const passwordResetForm = document.getElementById('passwordResetForm');
     const resetSubmitBtn = document.getElementById('resetSubmitBtn');
@@ -274,9 +280,16 @@ function setupPasswordResetUI() {
         e.preventDefault();
         
         const tgId = resetTelegramIdInput.value.trim();
+        const newPassword = resetNewPasswordInput.value;
         
         if (!tgId) {
             resetError.textContent = 'Пожалуйста, введите ваш Telegram ID';
+            resetError.classList.remove('hidden');
+            resetSuccess.classList.add('hidden');
+            return;
+        }
+        if (!newPassword) {
+            resetError.textContent = 'Пожалуйста, введите новый пароль';
             resetError.classList.remove('hidden');
             resetSuccess.classList.add('hidden');
             return;
@@ -288,7 +301,7 @@ function setupPasswordResetUI() {
         
         try {
             // Отправляем запрос
-            const result = await requestPasswordReset(tgId, resetSubmitBtn);
+            const result = await requestPasswordReset(tgId, newPassword, resetSubmitBtn);
             
             if (result.success) {
                 resetSuccess.textContent = result.message;
@@ -689,19 +702,14 @@ async function fetchTasks() {
 
   list.innerHTML = '<li>Загрузка задач...</li>';
 
-  const activeSpaceId = state.activeSpaceId;
-
-  if (!activeSpaceId) {
-    list.innerHTML = '<li>Нет доступных пространств.</li>';
-    return;
-  }
+  const INBOX_COLUMN_ID = '228d2d4f-415d-4fbc-b8a2-d1a201938bd9';
 
   const supabaseClient = getSupabaseClient();
   const { data, error } = await runTelegramSupabaseRequest(
     (signal) => supabaseClient
       .from('tasks')
       .select('*')
-      .eq('column_id', activeSpaceId)
+      .eq('column_id', INBOX_COLUMN_ID)
       .order('created_at', { ascending: false })
       .abortSignal(signal),
     'Ошибка загрузки задач из Supabase.'
