@@ -14,6 +14,7 @@ const telegramUser = tg?.initDataUnsafe?.user;
 
 // 3. Пытаемся взять ID либо из Telegram, либо из памяти браузера
 const AUTH_STORAGE_KEYS = ['tg_user_id', 'tg_id'];
+const TELEGRAM_INBOX_COLUMN_ID = '228d2d4f-415d-4fbc-b8a2-d1a201938bd9';
 
 function getStoredTelegramUserId() {
   for (const key of AUTH_STORAGE_KEYS) {
@@ -476,19 +477,19 @@ async function loadCurrentSpacePreference() {
   const { data, error } = await runTelegramSupabaseRequest(
     (signal) => supabaseClient
       .from(USER_SETTINGS_TABLE)
-      .select('current_space_id')
-      .eq('tg_id', String(currentUserId))
+      .select('active_space_id')
+      .eq('user_id', String(currentUserId))
       .maybeSingle()
       .abortSignal(signal),
     'Ошибка загрузки настроек пользователя.'
   );
 
   if (error) {
-    console.warn('Не удалось загрузить current_space_id из Supabase:', error);
+    console.warn('Не удалось загрузить active_space_id из Supabase:', error);
     return null;
   }
 
-  const preferredSpace = data?.current_space_id;
+  const preferredSpace = data?.active_space_id;
   return typeof preferredSpace === 'string' && preferredSpace.trim() ? preferredSpace.trim() : null;
 }
 
@@ -667,17 +668,17 @@ async function persistCurrentSpacePreference(spaceId) {
       .from(USER_SETTINGS_TABLE)
       .upsert(
         {
-          tg_id: String(currentUserId),
-          current_space_id: String(spaceId)
+          user_id: String(currentUserId),
+          active_space_id: String(spaceId)
         },
-        { onConflict: 'tg_id' }
+        { onConflict: 'user_id' }
       )
       .abortSignal(signal),
     'Ошибка сохранения настроек пользователя.'
   );
 
   if (error) {
-    console.warn('Не удалось сохранить current_space_id в Supabase:', error);
+    console.warn('Не удалось сохранить active_space_id в Supabase:', error);
   }
 }
 
@@ -702,14 +703,12 @@ async function fetchTasks() {
 
   list.innerHTML = '<li>Загрузка задач...</li>';
 
-  const INBOX_COLUMN_ID = '228d2d4f-415d-4fbc-b8a2-d1a201938bd9';
-
   const supabaseClient = getSupabaseClient();
   const { data, error } = await runTelegramSupabaseRequest(
     (signal) => supabaseClient
       .from('tasks')
       .select('*')
-      .eq('column_id', INBOX_COLUMN_ID)
+      .eq('column_id', TELEGRAM_INBOX_COLUMN_ID)
       .order('created_at', { ascending: false })
       .abortSignal(signal),
     'Ошибка загрузки задач из Supabase.'
@@ -937,8 +936,8 @@ function subscribeToTasksRealtime() {
         table: 'tasks',
         filter: `user_id=eq.${String(currentUserId)}`
       },
-      () => {
-        void fetchTasks();
+      async () => {
+        await fetchTasks();
       }
     )
     .subscribe();
@@ -2123,6 +2122,7 @@ function switchSpace(nextSpace) {
   commit(`Переключено пространство на «${getSpaceLabel(nextSpace, state)}»`, (st) => {
     st.activeSpaceId = nextSpace;
   });
+  void persistCurrentSpacePreference(nextSpace);
   setSpaceMenuOpen(false);
   clearSpaceSelection();
   setSpaceActionMenuOpen(false);
@@ -2694,22 +2694,14 @@ async function initializeApp() {
 
   availableSpaces = syncSpacesWithState(await loadUserSpaces(), state);
   const supabasePreferredSpace = await loadCurrentSpacePreference();
-  const localStoragePreferredSpace = localStorage.getItem('preferred_space_id') || localStorage.getItem('activeSpaceId');
-  const localPreferredSpace = typeof localStoragePreferredSpace === 'string' && localStoragePreferredSpace in state.spaces
-    ? localStoragePreferredSpace
-    : state.activeSpaceId && state.activeSpaceId in state.spaces
-      ? state.activeSpaceId
-      : null;
-  const defaultTasksSpace = findSpaceKeyByName('Режим задач', state);
+  const defaultTasksSpace = findSpaceKeyByName('Режим задач', state) || TELEGRAM_INBOX_COLUMN_ID;
   const initialSpace = supabasePreferredSpace && supabasePreferredSpace in state.spaces
     ? supabasePreferredSpace
-    : localPreferredSpace && localPreferredSpace in state.spaces
-      ? localPreferredSpace
-      : defaultTasksSpace && defaultTasksSpace in state.spaces
-        ? defaultTasksSpace
-        : availableSpaces[0]?.key && availableSpaces[0].key in state.spaces
-          ? availableSpaces[0].key
-          : null;
+    : defaultTasksSpace && defaultTasksSpace in state.spaces
+      ? defaultTasksSpace
+      : availableSpaces[0]?.key && availableSpaces[0].key in state.spaces
+        ? availableSpaces[0].key
+        : null;
 
   if (state.activeSpaceId !== initialSpace) {
     state.activeSpaceId = initialSpace;
