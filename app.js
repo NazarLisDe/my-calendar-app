@@ -271,7 +271,8 @@ function setupPasswordResetUI() {
         resetSuccess.textContent = '';
         resetSuccess.classList.add('hidden');
         resetSubmitBtn.disabled = false;
-        resetSubmitBtn.textContent = 'Отправить запрос в бот';
+        resetSubmitBtn.textContent = 'Сменить пароль';
+        if (resetNewPasswordInput) resetNewPasswordInput.value = '';
         
         telegramIdInput.focus();
     });
@@ -285,6 +286,12 @@ function setupPasswordResetUI() {
         
         if (!tgId) {
             resetError.textContent = 'Пожалуйста, введите ваш Telegram ID';
+            resetError.classList.remove('hidden');
+            resetSuccess.classList.add('hidden');
+            return;
+        }
+        if (!newPassword || newPassword.length < 4) {
+            resetError.textContent = 'Пароль должен быть не короче 4 символов';
             resetError.classList.remove('hidden');
             resetSuccess.classList.add('hidden');
             return;
@@ -322,7 +329,8 @@ function setupPasswordResetUI() {
         }
         
         resetSubmitBtn.disabled = false;
-        resetSubmitBtn.textContent = 'Отправить запрос в бот';
+        resetSubmitBtn.textContent = 'Сменить пароль';
+        if (resetNewPasswordInput) resetNewPasswordInput.value = '';
     });
 }
 
@@ -477,8 +485,8 @@ async function loadCurrentSpacePreference() {
   const { data, error } = await runTelegramSupabaseRequest(
     (signal) => supabaseClient
       .from(USER_SETTINGS_TABLE)
-      .select('active_space_id')
-      .eq('user_id', String(currentUserId))
+      .select('current_space_id')
+      .eq('tg_id', String(currentUserId))
       .maybeSingle()
       .abortSignal(signal),
     'Ошибка загрузки настроек пользователя.'
@@ -489,7 +497,7 @@ async function loadCurrentSpacePreference() {
     return null;
   }
 
-  const preferredSpace = data?.active_space_id;
+  const preferredSpace = data?.current_space_id;
   return typeof preferredSpace === 'string' && preferredSpace.trim() ? preferredSpace.trim() : null;
 }
 
@@ -668,10 +676,10 @@ async function persistCurrentSpacePreference(spaceId) {
       .from(USER_SETTINGS_TABLE)
       .upsert(
         {
-          user_id: String(currentUserId),
-          active_space_id: String(spaceId)
+          tg_id: String(currentUserId),
+          current_space_id: String(spaceId)
         },
-        { onConflict: 'user_id' }
+        { onConflict: 'tg_id' }
       )
       .abortSignal(signal),
     'Ошибка сохранения настроек пользователя.'
