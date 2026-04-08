@@ -161,7 +161,7 @@
 
       <!-- Форма запроса смены пароля -->
       <div id="passwordResetSection" class="login-section hidden">
-        <h2>Запрос смены пароля</h2>
+        <h2>Смена пароля</h2>
         <form id="passwordResetForm">
           <div class="form-group">
             <label for="resetTelegramIdInput">Telegram ID:</label>
@@ -182,10 +182,10 @@
               required
             />
           </div>
-          <p class="hint-text">Отправьте запрос в бота для подтверждения. Вы получите ссылку для создания нового пароля.</p>
+          <p class="hint-text">В Telegram придёт запрос — ответьте /approve_reset для подтверждения.</p>
           <div class="form-error hidden" id="resetError" role="alert"></div>
           <div class="form-success hidden" id="resetSuccess" role="status"></div>
-          <button type="submit" class="login-btn" id="resetSubmitBtn">Отправить запрос в бот</button>
+          <button type="submit" class="login-btn" id="resetSubmitBtn">Сменить пароль</button>
         </form>
         <div class="login-footer">
           <button id="backToLoginBtn" type="button" class="link-btn">Вернуться ко входу</button>
