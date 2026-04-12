@@ -1,2727 +1,630 @@
-const DAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 
-const STORAGE_KEY = 'calendar-board-state-v2';
-const LEGACY_STORAGE_KEY = 'calendar-board-state-v1';
-
-// ... (выше DAYS и т.д.)
-
-// 1. Инициализация Supabase (убедитесь, что она выше!)
-// const supabase = createClient(...) 
-
-// 2. Получаем данные из Telegram, если открыли как Mini App
-const tg = window.Telegram?.WebApp;
-const telegramUser = tg?.initDataUnsafe?.user;
-
-// 3. Пытаемся взять ID либо из Telegram, либо из памяти браузера
-const AUTH_STORAGE_KEYS = ['tg_user_id', 'tg_id'];
-const TELEGRAM_INBOX_COLUMN_ID = '228d2d4f-415d-4fbc-b8a2-d1a201938bd9';
-
-function getStoredTelegramUserId() {
-  for (const key of AUTH_STORAGE_KEYS) {
-    const value = localStorage.getItem(key);
-    if (value) return value;
-  }
-  return null;
-}
-
-function isUserAuthenticated() {
-  return Boolean(currentUserId || telegramUser?.id || getStoredTelegramUserId());
-}
-
-let currentUserId = telegramUser?.id || getStoredTelegramUserId();
-let authResolution = null;
-
-// Константы Supabase (должны быть перед checkAuth)
-const SUPABASE_URL = window.CALENDAR_CONFIG?.SUPABASE_URL || window.SUPABASE_URL;
-const SUPABASE_ANON_KEY = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
-
-// 4. Функция самой проверки
-async function checkAuth() {
-    if (currentUserId) return currentUserId;
-    return showLoginModal();
-}
-
-// Функция показа модального окна входа
-function showLoginModal() {
-    if (authResolution?.promise) return authResolution.promise;
-
-    const overlay = document.getElementById('login-overlay');
-    authResolution = {};
-    authResolution.promise = new Promise((resolve) => { authResolution.resolve = resolve; });
-    const form = document.getElementById('loginForm');
-    const errorElement = document.getElementById('loginError');
-    const submitBtn = form.querySelector('button[type="submit"]');
-    
-    // Очищаем формь и ошибки
-    form.reset();
-    errorElement.textContent = '';
-    errorElement.classList.add('hidden');
-    
-    // Показываем overlay
-    overlay.classList.add('show');
-    
-    // Устанавливаем фокус на первое поле
-    document.getElementById('telegramIdInput').focus();
-    
-    // Обработчик отправки формы
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        
-        const telegramId = document.getElementById('telegramIdInput').value.trim();
-        const password = document.getElementById('passwordInput').value.trim();
-        
-        if (!telegramId || !password) {
-            showLoginError('Пожалуйста, заполните все поля');
-            return;
-        }
-        
-        // Отключаем кнопку во время проверки
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Проверка...';
-        
-        try {
-            // Проверяем учетные данные в Supabase
-            const supabase = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
-                ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-                : null;
-                
-            if (!supabase) {
-                showLoginError('Ошибка подключения к Supabase');
-                return;
-            }
-            
-            const { data, error } = await supabase
-                .from('users_auth')
-                .select('telegram_id')
-                .eq('telegram_id', telegramId)
-                .eq('password_hash', password)
-                .single();
-            
-            if (error || !data) {
-                showLoginError('Неверный Telegram ID или пароль');
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Войти';
-                return;
-            }
-            
-            // Успешный вход
-            localStorage.setItem('tg_user_id', telegramId);
-            localStorage.setItem('tg_id', telegramId);
-            localStorage.setItem('is_auth', 'true');
-            currentUserId = telegramId;
-            
-            // Скрываем модальное окно
-            overlay.classList.remove('show');
-            form.removeEventListener('submit', handleSubmit);
-            submitBtn.textContent = 'Войти';
-            submitBtn.disabled = false;
-            
-            if (authResolution?.resolve) authResolution.resolve(telegramId);
-            authResolution = null;
-            
-        } catch (err) {
-            console.error('Login error:', err);
-            showLoginError('Ошибка при входе. Проверьте соединение с интернетом');
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Войти';
-        }
-    };
-    
-    // Функция показа ошибки
-    function showLoginError(message) {
-        errorElement.textContent = message;
-        errorElement.classList.remove('hidden');
-    }
-    
-    form.onsubmit = handleSubmit;
-    
-    // Настраиваем UI для смены пароля
-    setupPasswordResetUI();
-
-    return authResolution.promise;
-}
-
-// API эндпоинт для запроса смены пароля (заглушка - вставить реальный адрес)
-const PASSWORD_RESET_API_URL = 'https://mexvcooxruzxrntvhzmc.supabase.co/functions/v1/request-password-reset';
-
-// Функция запроса смены пароля
-async function requestPasswordReset(tgId, newPassword, submitBtn) {
-    return new Promise(async (resolve, reject) => {
-        if (!tgId) {
-            reject(new Error('tgId не указан'));
-            return;
-        }
-        if (!newPassword) {
-            reject(new Error('Новый пароль не указан'));
-            return;
-        }
-
-        try {
-            // Отправляем POST запрос на запрос сброса
-            const response = await fetch(PASSWORD_RESET_API_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    telegram_id: tgId,
-                    new_password: newPassword
-                })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                if (response.status === 404) {
-                    reject(new Error('Telegram ID не найден в системе'));
-                    return;
-                }
-                reject(new Error(data?.message || 'Ошибка при отправке запроса'));
-                return;
-            }
-
-            // Сообщаем пользователю о начале ожидания
-            if (submitBtn) {
-                submitBtn.disabled = true;
-                submitBtn.textContent = 'Ожидание подтверждения в TG...';
-            }
-
-            // Polling каждые 3 секунды по check=true
-            const intervalId = setInterval(async () => {
-                try {
-                    const checkResponse = await fetch(`${PASSWORD_RESET_API_URL}?check=true&tgId=${encodeURIComponent(tgId)}`);
-                    const checkData = await checkResponse.json();
-
-                    if (checkData?.status === 'approved') {
-                        clearInterval(intervalId);
-                        resolve({ success: true, message: 'Доступ одобрен!' });
-                    } else if (checkData?.status === 'denied') {
-                        clearInterval(intervalId);
-                        reject(new Error('В доступе отказано'));
-                    } else {
-                        // pending / неизвестно -> ждём дальше
-                        console.info('В ожидании ответа админа', tgId, checkData?.status);
-                    }
-                } catch (error) {
-                    console.error('Polling error:', error);
-                }
-            }, 3000);
-
-            // Таймаут через 2 минуты
-            const timeoutId = setTimeout(() => {
-                clearInterval(intervalId);
-                reject(new Error('Время ожидания истекло. Попробуйте еще раз.'));
-            }, 120000);
-
-            // Очистка, если resolve/reject произойдёт раньше
-            const cleanup = () => {
-                clearInterval(intervalId);
-                clearTimeout(timeoutId);
-            };
-
-            const oldResolve = resolve;
-            const oldReject = reject;
-
-            resolve = (value) => { cleanup(); oldResolve(value); };
-            reject = (err) => { cleanup(); oldReject(err); };
-
-        } catch (error) {
-            console.error('Password reset request error:', error);
-            reject(new Error(error.message || 'Не удалось отправить запрос. Проверьте соединение с интернетом'));
-        }
-    });
-}
-
-// Настройка UI для переключения между формами входа и смены пароля
-function setupPasswordResetUI() {
-    const toPasswordResetBtn = document.getElementById('toPasswordResetBtn');
-    const backToLoginBtn = document.getElementById('backToLoginBtn');
-    const loginSection = document.getElementById('loginSection');
-    const passwordResetSection = document.getElementById('passwordResetSection');
-    const resetTelegramIdInput = document.getElementById('resetTelegramIdInput');
-    const resetNewPasswordInput = document.getElementById('resetNewPasswordInput');
-    const telegramIdInput = document.getElementById('telegramIdInput');
-    const passwordResetForm = document.getElementById('passwordResetForm');
-    const resetSubmitBtn = document.getElementById('resetSubmitBtn');
-    const resetError = document.getElementById('resetError');
-    const resetSuccess = document.getElementById('resetSuccess');
-    
-    // Кнопка "Сменить пароль"
-    toPasswordResetBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        loginSection.classList.add('hidden');
-        passwordResetSection.classList.remove('hidden');
-        
-        // Если Telegram ID уже введен, подставляем его
-        if (telegramIdInput.value) {
-            resetTelegramIdInput.value = telegramIdInput.value;
-        }
-        resetTelegramIdInput.focus();
-    });
-    
-    // Кнопка "Вернуться"
-    backToLoginBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        passwordResetSection.classList.add('hidden');
-        loginSection.classList.remove('hidden');
-        
-        // Очищаем ошибки и сообщения
-        resetError.textContent = '';
-        resetError.classList.add('hidden');
-        resetSuccess.textContent = '';
-        resetSuccess.classList.add('hidden');
-        resetSubmitBtn.disabled = false;
-        resetSubmitBtn.textContent = 'Сменить пароль';
-        if (resetNewPasswordInput) resetNewPasswordInput.value = '';
-        
-        telegramIdInput.focus();
-    });
-    
-    // Обработчик формы смены пароля
-    passwordResetForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        const tgId = resetTelegramIdInput.value.trim();
-        const newPassword = resetNewPasswordInput.value;
-        
-        if (!tgId) {
-            resetError.textContent = 'Пожалуйста, введите ваш Telegram ID';
-            resetError.classList.remove('hidden');
-            resetSuccess.classList.add('hidden');
-            return;
-        }
-        if (!newPassword || newPassword.length < 4) {
-            resetError.textContent = 'Пароль должен быть не короче 4 символов';
-            resetError.classList.remove('hidden');
-            resetSuccess.classList.add('hidden');
-            return;
-        }
-        if (!newPassword) {
-            resetError.textContent = 'Пожалуйста, введите новый пароль';
-            resetError.classList.remove('hidden');
-            resetSuccess.classList.add('hidden');
-            return;
-        }
-        
-        // Очищаем предыдущие сообщения
-        resetError.classList.add('hidden');
-        resetSuccess.classList.add('hidden');
-        
-        try {
-            // Отправляем запрос
-            const result = await requestPasswordReset(tgId, newPassword, resetSubmitBtn);
-            
-            if (result.success) {
-                resetSuccess.textContent = result.message;
-                resetSuccess.classList.remove('hidden');
-                
-                // Через 3 секунды закрываем модальное окно автоматически
-                setTimeout(() => {
-                    document.getElementById('login-overlay').classList.remove('show');
-                }, 3000);
-            } else {
-                resetError.textContent = result.message;
-                resetError.classList.remove('hidden');
-            }
-        } catch (error) {
-            resetError.textContent = error.message;
-            resetError.classList.remove('hidden');
-        }
-        
-        resetSubmitBtn.disabled = false;
-        resetSubmitBtn.textContent = 'Сменить пароль';
-        if (resetNewPasswordInput) resetNewPasswordInput.value = '';
-    });
-}
-
-
-console.log('Active User ID:', currentUserId);
-
-const TELEGRAM_TARGET = {
-  notes: 'notes',
-  day: 'day',
-  board: 'board'
-};
-
-const TELEGRAM_REQUEST_TIMEOUT_MS = 12000;
-const TELEGRAM_RETRY_COUNT = 1;
-const USER_SETTINGS_TABLE = 'user_settings';
-const USER_SPACES_TABLE = 'user_spaces';
-
-function getSupabaseClient() {
-  if (!window.supabase || !SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
-
-  return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: {
-      headers: {
-        'x-user-id': String(currentUserId || ''),
-        'x-tg-id': String(currentUserId || '')
-      }
-    }
-  });
-}
-
-function stripTelegramTargetMarker(text = '') {
-  return text.replace(/^\[(?:NOTES|DAY|BOARD)\]\s*/i, '').trim();
-}
-
-function detectTelegramTarget(text = '') {
-  if (/^\[DAY\]/i.test(text)) return TELEGRAM_TARGET.day;
-  if (/^\[BOARD\]/i.test(text)) return TELEGRAM_TARGET.board;
-  return TELEGRAM_TARGET.notes;
-}
-
-function withTelegramTarget(text = '', target = TELEGRAM_TARGET.notes) {
-  const clean = stripTelegramTargetMarker(text);
-  const marker = target === TELEGRAM_TARGET.day
-    ? '[DAY]'
-    : target === TELEGRAM_TARGET.board
-      ? '[BOARD]'
-      : '[NOTES]';
-  return `${marker} ${clean}`.trim();
-}
-
-function normalizeTelegramError(error, fallbackMessage) {
-  const message = error?.message || String(error || fallbackMessage);
-  if (/failed to fetch|networkerror|network request failed|load failed|abort/i.test(message)) {
-    return new Error('Не удалось подключиться к Supabase. Проверьте интернет, CORS в Supabase и правильность SUPABASE_URL / SUPABASE_ANON_KEY.');
-  }
-  return new Error(message || fallbackMessage);
-}
-
-function escapeHtml(value = '') {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function getBoardTransferTargets() {
-  const active = getActiveSpace(effectiveState());
-  const targets = [];
-
-  DAYS.forEach((day) => {
-    active.days[day].forEach((task) => {
-      targets.push({
-        taskId: task.id,
-        label: `${day}: ${task.title || 'Без названия'}`
-      });
-    });
-  });
-
-  active.dockTasks.forEach((task) => {
-    targets.push({
-      taskId: task.id,
-      label: `Поле доски: ${task.title || 'Без названия'}`
-    });
-  });
-
-  return targets;
-}
-
-async function runTelegramSupabaseRequest(buildRequest, fallbackMessage) {
-  let lastError = null;
-
-  for (let attempt = 0; attempt <= TELEGRAM_RETRY_COUNT; attempt += 1) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TELEGRAM_REQUEST_TIMEOUT_MS);
-
-    try {
-      const { data, error } = await buildRequest(controller.signal);
-      clearTimeout(timeoutId);
-
-      if (error) {
-        lastError = normalizeTelegramError(error, fallbackMessage);
-        if (attempt < TELEGRAM_RETRY_COUNT) continue;
-        return { data: null, error: lastError };
-      }
-
-      return { data, error: null };
-    } catch (error) {
-      clearTimeout(timeoutId);
-      lastError = normalizeTelegramError(error, fallbackMessage);
-      if (attempt < TELEGRAM_RETRY_COUNT) continue;
-      return { data: null, error: lastError };
-    }
-  }
-
-  return { data: null, error: lastError || new Error(fallbackMessage) };
-}
-
-async function updateTelegramTask(taskId, updates) {
-  const supabaseClient = getSupabaseClient();
-  if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
-
-  return runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from('tasks')
-      .update(updates)
-      .eq('id', taskId)
-      .abortSignal(signal),
-    'Ошибка обновления задачи в Supabase.'
-  );
-}
-
-async function deleteTelegramTask(taskId) {
-  const supabaseClient = getSupabaseClient();
-  if (!supabaseClient) return { error: new Error('Supabase не настроен в CALENDAR_CONFIG или window.') };
-
-  return runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from('tasks')
-      .delete()
-      .eq('id', taskId)
-      .abortSignal(signal),
-    'Ошибка удаления задачи из Supabase.'
-  );
-}
-
-async function loadCurrentSpacePreference() {
-  const supabaseClient = getSupabaseClient();
-  if (!supabaseClient || !currentUserId || !isUserAuthenticated()) return null;
-
-  const { data, error } = await runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from(USER_SETTINGS_TABLE)
-      .select('current_space_id')
-      .eq('tg_id', String(currentUserId))
-      .maybeSingle()
-      .abortSignal(signal),
-    'Ошибка загрузки настроек пользователя.'
-  );
-
-  if (error) {
-    console.warn('Не удалось загрузить active_space_id из Supabase:', error);
-    return null;
-  }
-
-  const preferredSpace = data?.current_space_id;
-  return typeof preferredSpace === 'string' && preferredSpace.trim() ? preferredSpace.trim() : null;
-}
-
-function findSpaceKeyByName(spaceName, st = state) {
-  const expectedName = typeof spaceName === 'string' ? spaceName.trim().toLowerCase() : '';
-  if (!expectedName) return null;
-
-  const spaceEntries = Object.entries(st.spaceNames || {});
-  const matched = spaceEntries.find(([, name]) => typeof name === 'string' && name.trim().toLowerCase() === expectedName);
-  if (matched?.[0]) return matched[0];
-
-  const fallbackEntry = Object.keys(st.spaces || {}).find((key) => key.trim().toLowerCase() === expectedName);
-  return fallbackEntry || null;
-}
-
-function normalizeUserSpaceRecord(record) {
-  if (!record || typeof record !== 'object') return null;
-
-  const rawKey = record.id ?? record.space_id ?? record.space_key ?? record.slug ?? null;
-  const key = typeof rawKey === 'string' && rawKey.trim() ? rawKey.trim() : null;
-  if (!key) return null;
-
-  const rawName = record.space_name ?? record.name ?? record.title ?? null;
-  const name = typeof rawName === 'string' && rawName.trim()
-    ? rawName.trim()
-    : key;
-
-  return { key, name };
-}
-
-function buildAvailableSpacesFromState(st = state) {
-  return Object.keys(st.spaces || {}).map((key) => ({
-    key,
-    name: st.spaceNames?.[key] || key
-  }));
-}
-
-function syncSpacesWithState(spaces, st = state) {
-  const nextSpaces = Array.isArray(spaces) ? spaces.filter((space) => space?.key) : buildAvailableSpacesFromState(st);
-  const nextKeys = new Set(nextSpaces.map(({ key }) => key));
-
-  if (!st.spaceNames) st.spaceNames = {};
-
-  Object.keys(st.spaces || {}).forEach((key) => {
-    if (!nextKeys.has(key)) delete st.spaces[key];
-  });
-
-  Object.keys(st.spaceNames).forEach((key) => {
-    if (!nextKeys.has(key)) delete st.spaceNames[key];
-  });
-
-  nextSpaces.forEach(({ key, name }) => {
-    if (!st.spaces[key]) st.spaces[key] = createSpaceState();
-    st.spaceNames[key] = name || key;
-  });
-
-  if (!(st.activeSpaceId in st.spaces)) {
-    st.activeSpaceId = nextSpaces[0]?.key || null;
-  }
-
-  return nextSpaces;
-}
-
-let availableSpaces = [];
-
-function resolveSpaceId(spaceKey) {
-  const rawKey = typeof spaceKey === 'string' ? spaceKey.trim() : '';
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  if (rawKey && uuidPattern.test(rawKey)) return rawKey;
-  return crypto.randomUUID();
-}
-
-async function loadUserSpaces() {
-  const supabaseClient = getSupabaseClient();
-  if (!supabaseClient || !currentUserId || !isUserAuthenticated()) {
-    return buildAvailableSpacesFromState(state);
-  }
-
-  const { data, error } = await runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from(USER_SPACES_TABLE)
-      .select('*')
-      .eq('user_id', String(currentUserId))
-      .abortSignal(signal),
-    'Ошибка загрузки пространств пользователя.'
-  );
-
-  if (error) {
-    console.warn('Не удалось загрузить список пространств из Supabase:', error);
-    AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
-    localStorage.removeItem('is_auth');
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
-    currentUserId = null;
-    state = defaultState();
-    availableSpaces = [];
-    syncLogoutButtonVisibility();
-    await showLoginModal();
-    return buildAvailableSpacesFromState(state);
-  }
-
-  const normalizedSpaces = Array.isArray(data)
-    ? data.map(normalizeUserSpaceRecord).filter(Boolean)
-    : [];
-
-  return normalizedSpaces;
-}
-
-async function insertUserSpace(spaceKey, spaceName) {
-  const supabaseClient = getSupabaseClient();
-  if (!supabaseClient || !isUserAuthenticated()) return null;
-
-  const newId = resolveSpaceId(spaceKey);
-  const tg_id = currentUserId;
-
-  if (tg_id == null) {
-    alert('Ошибка: Вы не авторизованы. Пожалуйста, введите ID заново');
-    return null;
-  }
-
-  const payload = {
-    id: newId,
-    user_id: String(tg_id),
-    name: String(spaceName || spaceKey)
+// ===========================================================================
+// app.js — Cloud-native. localStorage is used ONLY for auth tokens.
+// All content (tasks, boards, notes) lives exclusively in Supabase.
+// ===========================================================================
+const DAYS = ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'];
+const AUTH_KEYS = ['tg_user_id','tg_id'];
+const INBOX_COL = '228d2d4f-415d-4fbc-b8a2-d1a201938bd9';
+const SB_URL  = window.CALENDAR_CONFIG?.SUPABASE_URL      || window.SUPABASE_URL;
+const SB_KEY  = window.CALENDAR_CONFIG?.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
+const RESET_URL = 'https://mexvcooxruzxrntvhzmc.supabase.co/functions/v1/request-password-reset';
+const LONG_MS = 360, LONG_PX = 14;
+
+// ---------------------------------------------------------------------------
+// AUTH
+// ---------------------------------------------------------------------------
+const tgApp  = window.Telegram?.WebApp;
+const tgUser = tgApp?.initDataUnsafe?.user;
+function getStoredId(){for(const k of AUTH_KEYS){const v=localStorage.getItem(k);if(v)return v;}return null;}
+function isAuth(){return Boolean(currentUserId||tgUser?.id||getStoredId());}
+let currentUserId = tgUser?.id ? String(tgUser.id) : getStoredId();
+let authRes = null;
+async function checkAuth(){if(currentUserId)return currentUserId;return showLoginModal();}
+
+function showLoginModal(){
+  if(authRes?.promise)return authRes.promise;
+  const overlay=document.getElementById('login-overlay');
+  authRes={}; authRes.promise=new Promise(r=>{authRes.resolve=r;});
+  const form=document.getElementById('loginForm'),errEl=document.getElementById('loginError');
+  const btn=form.querySelector('button[type="submit"]');
+  form.reset();errEl.textContent='';errEl.classList.add('hidden');
+  overlay.classList.add('show'); document.getElementById('telegramIdInput').focus();
+  const showErr=m=>{errEl.textContent=m;errEl.classList.remove('hidden');};
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const tid=document.getElementById('telegramIdInput').value.trim();
+    const pw=document.getElementById('passwordInput').value.trim();
+    if(!tid||!pw){showErr('Заполните все поля');return;}
+    btn.disabled=true;btn.textContent='Проверка...';
+    try{
+      const sb=getSB();
+      if(!sb){showErr('Ошибка Supabase');btn.disabled=false;btn.textContent='Войти';return;}
+      const{data,error}=await sb.from('users_auth').select('telegram_id').eq('telegram_id',tid).eq('password_hash',pw).single();
+      if(error||!data){showErr('Неверный ID или пароль');btn.disabled=false;btn.textContent='Войти';return;}
+      AUTH_KEYS.forEach(k=>localStorage.setItem(k,tid));
+      localStorage.setItem('is_auth','true'); currentUserId=tid;
+      overlay.classList.remove('show');btn.textContent='Войти';btn.disabled=false;
+      if(authRes?.resolve)authRes.resolve(tid); authRes=null;
+    }catch(err){console.error(err);showErr('Ошибка входа');btn.disabled=false;btn.textContent='Войти';}
   };
-
-  console.log('DEBUG: Твой TG_ID сейчас:', tg_id);
-  console.log('DEBUG: Данные для отправки:', { id: newId, user_id: tg_id, name: spaceName });
-
-  const { error } = await runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from(USER_SPACES_TABLE)
-      .insert(payload)
-      .abortSignal(signal),
-    'Ошибка сохранения пространства пользователя.'
-  );
-
-  if (error) {
-    console.warn('Не удалось сохранить пространство в Supabase:', error);
-    alert(`Не удалось сохранить пространство: ${error.message || 'Неизвестная ошибка сервера.'}`);
-    return null;
-  }
-
-  return newId;
+  setupResetUI();
+  return authRes.promise;
 }
 
-async function deleteUserSpaces(spaceKeys = []) {
-  const supabaseClient = getSupabaseClient();
-  const keys = Array.isArray(spaceKeys) ? spaceKeys.filter(Boolean) : [];
-  if (!supabaseClient || !currentUserId || !isUserAuthenticated() || keys.length === 0) return true;
-
-  const { error } = await runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from(USER_SPACES_TABLE)
-      .delete()
-      .eq('user_id', String(currentUserId))
-      .in('id', keys.map(String))
-      .abortSignal(signal),
-    'Ошибка удаления пространства пользователя.'
-  );
-
-  if (error) {
-    console.warn('Не удалось удалить пространство из Supabase:', error);
-    return false;
-  }
-
-  return true;
-}
-
-async function persistCurrentSpacePreference(spaceId) {
-  const supabaseClient = getSupabaseClient();
-  if (!supabaseClient || !currentUserId || !isUserAuthenticated() || !spaceId) return;
-
-  const { error } = await runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from(USER_SETTINGS_TABLE)
-      .upsert(
-        {
-          tg_id: String(currentUserId),
-          current_space_id: String(spaceId)
-        },
-        { onConflict: 'tg_id' }
-      )
-      .abortSignal(signal),
-    'Ошибка сохранения настроек пользователя.'
-  );
-
-  if (error) {
-    console.warn('Не удалось сохранить active_space_id в Supabase:', error);
-  }
-}
-
-async function fetchTasks() {
-  const list = document.getElementById('telegramTasksList');
-  if (!list) return;
-
-  if (!currentUserId || !isUserAuthenticated()) {
-    list.innerHTML = '<li>Войдите, чтобы увидеть личные задачи из Telegram.</li>';
-    return;
-  }
-
-  if (!window.supabase) {
-    list.innerHTML = '<li>Supabase SDK не загружен.</li>';
-    return;
-  }
-
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    list.innerHTML = '<li>Добавьте SUPABASE_URL и SUPABASE_ANON_KEY в window.CALENDAR_CONFIG.</li>';
-    return;
-  }
-
-  list.innerHTML = '<li>Загрузка задач...</li>';
-
-  const supabaseClient = getSupabaseClient();
-  const { data, error } = await runTelegramSupabaseRequest(
-    (signal) => supabaseClient
-      .from('tasks')
-      .select('*')
-      .eq('column_id', TELEGRAM_INBOX_COLUMN_ID)
-      .order('created_at', { ascending: false })
-      .abortSignal(signal),
-    'Ошибка загрузки задач из Supabase.'
-  );
-
-  if (error) {
-    list.innerHTML = `<li>Ошибка загрузки: ${error.message}</li>`;
-    return;
-  }
-
-  if (!data || data.length === 0) {
-    list.innerHTML = '<li>Пока нет задач из Telegram.</li>';
-    return;
-  }
-
-  list.innerHTML = '';
-
-  data.forEach((task) => {
-    const li = document.createElement('li');
-    li.className = 'telegram-task-item';
-    li.dataset.taskId = String(task.id);
-
-    const text = stripTelegramTargetMarker(task.text || '');
-    const target = detectTelegramTarget(task.text || '');
-    const targetLabel = target === TELEGRAM_TARGET.day ? 'день' : target === TELEGRAM_TARGET.board ? 'доска' : 'заметки';
-    const status = task.is_completed ? '✅' : '⬜️';
-
-    li.innerHTML = `
-      <div class="telegram-task-row">
-        <span class="telegram-task-title">${status} ${escapeHtml(text)}</span>
-        <small class="telegram-task-target">${targetLabel}</small>
-      </div>
-      <div class="telegram-task-actions">
-        <button type="button" data-action="edit" class="telegram-task-edit">✏️</button>
-        <button type="button" data-action="to-day">В день</button>
-        <button type="button" data-action="delete">Удалить</button>
-      </div>
-      <div class="telegram-transfer-menu hidden" data-menu="day"></div>
-      <div class="telegram-transfer-menu hidden" data-menu="board"></div>
-    `;
-
-    const dayMenu = li.querySelector('[data-menu="day"]');
-    const boardMenu = li.querySelector('[data-menu="board"]');
-
-    dayMenu.innerHTML = DAYS.map((day) => `<button type="button" data-day="${day}">${day}</button>`).join('');
-
-    const closeMenus = () => {
-      dayMenu.classList.add('hidden');
-      boardMenu.classList.add('hidden');
-    };
-
-    li.addEventListener('click', async (event) => {
-      const action = event.target?.dataset?.action;
-      const day = event.target?.dataset?.day;
-      const boardTaskIdRaw = event.target?.dataset?.boardTaskId;
-
-      if (action === 'edit') {
-        const titleSpan = li.querySelector('.telegram-task-title');
-        const originalHTML = titleSpan.innerHTML;
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'telegram-task-input';
-        input.value = text;
-        titleSpan.replaceWith(input);
-        input.focus();
-        input.select();
-
-        let saved = false;
-
-        const save = async () => {
-          if (saved) return;
-          saved = true;
-          const newText = input.value.trim();
-          if (!newText) {
-            input.replaceWith(titleSpan);
-            return;
-          }
-          const { error: updErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(newText, target) });
-          if (updErr) {
-            alert(`Ошибка редактирования: ${updErr.message}`);
-            input.replaceWith(titleSpan);
-            return;
-          }
-          await fetchTasks();
-        };
-
-        const cancel = () => {
-          if (saved) return;
-          saved = true;
-          input.replaceWith(titleSpan);
-        };
-
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            save();
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            cancel();
-          }
-        });
-
-        input.addEventListener('blur', () => save());
-        return;
-      }
-
-      if (action === 'delete') {
-        if (!confirm('Удалить задачу из Telegram списка?')) return;
-        const { error: delErr } = await deleteTelegramTask(task.id);
-        if (delErr) {
-          alert(`Ошибка удаления: ${delErr.message}`);
-          return;
-        }
-        await fetchTasks();
-        return;
-      }
-
-      if (action === 'to-day') {
-        const shouldOpen = dayMenu.classList.contains('hidden');
-        closeMenus();
-        if (shouldOpen) dayMenu.classList.remove('hidden');
-        return;
-      }
-
-      if (action === 'to-board') {
-        const targets = getBoardTransferTargets();
-        if (targets.length === 0) {
-          alert('Нет доступных досок. Сначала создайте хотя бы одну задачу в календаре или в поле доски.');
-          return;
-        }
-
-        boardMenu.innerHTML = targets
-          .map((item) => `<button type="button" data-board-task-id="${item.taskId}">${escapeHtml(item.label)}</button>`)
-          .join('');
-
-        const shouldOpen = boardMenu.classList.contains('hidden');
-        closeMenus();
-        if (shouldOpen) boardMenu.classList.remove('hidden');
-        return;
-      }
-
-      if (day) {
-        closeMenus();
-
-        commit(`Telegram-задача перенесена в день «${day}»`, (st) => {
-          getActiveSpace(st).days[day].push({
-            id: st.nextTaskId++,
-            title: text,
-            color: null,
-            pinned: false,
-            createdAt: Date.now(),
-            taskGroupId: null
-          });
-        });
-
-        const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.day) });
-        if (mvErr) alert(`Задача добавлена в день, но не обновлён тип в Supabase: ${mvErr.message}`);
-        await fetchTasks();
-        return;
-      }
-
-      if (boardTaskIdRaw) {
-        closeMenus();
-
-        const boardTaskId = Number(boardTaskIdRaw);
-        if (!Number.isInteger(boardTaskId)) {
-          alert('Некорректная доска.');
-          return;
-        }
-
-        commit('Telegram-задача перенесена на выбранную доску', (st) => {
-          const board = ensureBoard(st, boardTaskId);
-          board.clouds.push({
-            id: st.nextCloudId++,
-            text,
-            x: 80,
-            y: 80,
-            width: 220,
-            height: 140,
-            groupId: null,
-            createdAt: Date.now()
-          });
-        });
-
-        currentBoardTaskId = boardTaskId;
-        selectedCloudIds = new Set();
-        renderBoard();
-
-        const { error: mvErr } = await updateTelegramTask(task.id, { text: withTelegramTarget(text, TELEGRAM_TARGET.board) });
-        if (mvErr) alert(`Задача добавлена на доску, но не обновлён тип в Supabase: ${mvErr.message}`);
-        await fetchTasks();
-      }
-    });
-
-    list.append(li);
+async function requestPwReset(tgId,newPw,btn){
+  return new Promise(async(resolve,reject)=>{
+    if(!tgId){reject(new Error('tgId?'));return;}
+    if(!newPw){reject(new Error('пароль?'));return;}
+    try{
+      const r=await fetch(RESET_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({telegram_id:tgId,new_password:newPw})});
+      const d=await r.json();
+      if(!r.ok){reject(new Error(r.status===404?'ID не найден':(d?.message||'Ошибка')));return;}
+      if(btn){btn.disabled=true;btn.textContent='Ожидание TG...';}
+      let iv,to;
+      const done=()=>{clearInterval(iv);clearTimeout(to);};
+      const or=resolve,oj=reject;
+      resolve=v=>{done();or(v);}; reject=e=>{done();oj(e);};
+      iv=setInterval(async()=>{
+        try{
+          const cr=await fetch(RESET_URL+'?check=true&tgId='+encodeURIComponent(tgId));
+          const cd=await cr.json();
+          if(cd?.status==='approved')resolve({success:true,message:'Пароль изменён!'});
+          else if(cd?.status==='denied')reject(new Error('Отказано'));
+        }catch{}
+      },3000);
+      to=setTimeout(()=>reject(new Error('Таймаут')),120000);
+    }catch(e){reject(new Error(e.message||'Ошибка'));}
   });
 }
 
-
-let tasksRealtimeChannel = null;
-
-function unsubscribeFromTasksRealtime() {
-  const supabaseClient = getSupabaseClient();
-
-  if (tasksRealtimeChannel && supabaseClient) {
-    supabaseClient.removeChannel(tasksRealtimeChannel);
-  }
-
-  tasksRealtimeChannel = null;
+function setupResetUI(){
+  const toBtn=document.getElementById('toPasswordResetBtn'),backBtn=document.getElementById('backToLoginBtn');
+  const ls=document.getElementById('loginSection'),rs=document.getElementById('passwordResetSection');
+  const rtg=document.getElementById('resetTelegramIdInput'),rnp=document.getElementById('resetNewPasswordInput');
+  const tgi=document.getElementById('telegramIdInput'),rf=document.getElementById('passwordResetForm');
+  const rb=document.getElementById('resetSubmitBtn'),re=document.getElementById('resetError'),rok=document.getElementById('resetSuccess');
+  toBtn.addEventListener('click',e=>{e.preventDefault();ls.classList.add('hidden');rs.classList.remove('hidden');if(tgi.value)rtg.value=tgi.value;rtg.focus();});
+  backBtn.addEventListener('click',e=>{e.preventDefault();rs.classList.add('hidden');ls.classList.remove('hidden');re.classList.add('hidden');rok.classList.add('hidden');rb.disabled=false;rb.textContent='Сменить пароль';if(rnp)rnp.value='';tgi.focus();});
+  rf.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const tid=rtg.value.trim(),np=rnp?rnp.value.trim():'';
+    if(!tid){re.textContent='Telegram ID?';re.classList.remove('hidden');return;}
+    if(!np||np.length<4){re.textContent='Мин 4 символа';re.classList.remove('hidden');return;}
+    re.classList.add('hidden');rok.classList.add('hidden');
+    try{
+      const res=await requestPwReset(tid,np,rb);
+      if(res.success){rok.textContent=res.message;rok.classList.remove('hidden');setTimeout(()=>document.getElementById('login-overlay').classList.remove('show'),3000);}
+    }catch(err){re.textContent=err.message;re.classList.remove('hidden');}
+    rb.disabled=false;rb.textContent='Сменить пароль';if(rnp)rnp.value='';
+  });
 }
 
-function subscribeToTasksRealtime() {
-  unsubscribeFromTasksRealtime();
-
-  const supabaseClient = getSupabaseClient();
-  if (!supabaseClient || !currentUserId || !isUserAuthenticated()) return;
-
-  tasksRealtimeChannel = supabaseClient
-    .channel(`tasks-realtime-${String(currentUserId)}`)
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'tasks',
-        filter: `user_id=eq.${String(currentUserId)}`
-      },
-      async () => {
-        await fetchTasks();
-      }
-    )
-    .subscribe();
+// ---------------------------------------------------------------------------
+// SUPABASE CLIENT
+// ---------------------------------------------------------------------------
+function getSB(){
+  if(!window.supabase||!SB_URL||!SB_KEY)return null;
+  return window.supabase.createClient(SB_URL,SB_KEY,{
+    global:{headers:{'x-user-id':String(currentUserId||''),'x-tg-id':String(currentUserId||'')}}
+  });
+}
+const uid=()=>String(currentUserId||'');
+async function sbq(fn){
+  const sb=getSB();if(!sb)return{data:null,error:new Error('no sb')};
+  try{return await fn(sb);}catch(e){return{data:null,error:e};}
 }
 
-function createSpaceState() {
-  return {
-    days: Object.fromEntries(DAYS.map((d) => [d, []])),
-    dayBackgrounds: Object.fromEntries(DAYS.map((d) => [d, null])),
-    dayNotes: Object.fromEntries(DAYS.map((d) => [d, ''])),
-    boards: {},
-    dockTasks: [],
-    taskGroups: [],
-    sideNotes: []
+// ---------------------------------------------------------------------------
+// STATE — in-memory only. localStorage stores ONLY theme.
+// ---------------------------------------------------------------------------
+function mkSpace(){
+  return{
+    days:Object.fromEntries(DAYS.map(d=>[d,[]])),
+    dayBackgrounds:Object.fromEntries(DAYS.map(d=>[d,null])),
+    dayNotes:Object.fromEntries(DAYS.map(d=>[d,''])),
+    boards:{},dockTasks:[],taskGroups:[],sideNotes:[]
   };
 }
-
-const defaultState = () => ({
-  theme: 'light',
-  activeSpaceId: null,
-  nextTaskId: 1,
-  nextCloudId: 1,
-  nextGroupId: 1,
-  nextTaskGroupId: 1,
-  nextSideNoteId: 1,
-  sideNotes: [],
-  spaceNames: {},
-  spaces: {}
+const mkState=()=>({
+  theme:localStorage.getItem('app_theme')||'light',
+  activeSpaceId:null,
+  nextTaskId:Date.now(),nextCloudId:Date.now()+1,
+  nextGroupId:1,nextTaskGroupId:1,nextSideNoteId:1,
+  sideNotes:[],spaceNames:{},spaces:{}
 });
+let state=mkState(),avSpaces=[];
+let hist=[{desc:'Старт',snap:structuredClone(state),ts:new Date().toISOString()}];
+let hIdx=0,prevIdx=null,curBoard=null;
+let dragTask=null,dragCloud=null,dragCloudNote=null,dragBgTask=null,dragNote=null;
+let selClouds=new Set(),selTasks=new Set();
+let histOpen=false,instrOpen=false,spaceMenuOpen=false;
+let spaceActOpen=false,spaceActKey=null,selSpaces=new Set();
+let taskCtxOpen=false,dockOpen=false,notesOpen=false,taskCtx=null;
 
-let state = loadState();
-availableSpaces = syncSpacesWithState(buildAvailableSpacesFromState(state), state);
-let history = [{ description: 'Старт', snapshot: structuredClone(state), ts: new Date().toISOString() }];
-let currentHistoryIndex = 0;
-let previewIndex = null;
-let currentBoardTaskId = null;
-let dragTask = null;
-let dragCloud = null;
-let dragCloudNote = null;
-let dragBackgroundTask = null;
-let dragSideNote = null;
-let selectedCloudIds = new Set();
-let selectedTaskKeys = new Set();
-let isHistoryOpen = false;
-let isInstructionsOpen = false;
-let isSpaceMenuOpen = false;
-let isSpaceActionMenuOpen = false;
-let spaceActionTargetKey = null;
-let selectedSpaceKeys = new Set();
-let isTaskContextMenuOpen = false;
-let isDockMenuOpen = false;
-let isNotesPanelOpen = false;
-let taskContextTarget = null;
-const LONG_PRESS_MS = 360;
-const LONG_PRESS_MOVE_PX = 14;
+function persist(){localStorage.setItem('app_theme',state.theme);}
+function eff(){return prevIdx===null?state:hist[prevIdx].snap;}
+function getSpace(st=eff()){const k=(st.activeSpaceId in st.spaces)?st.activeSpaceId:Object.keys(st.spaces||{})[0]||null;return(k&&st.spaces[k])||mkSpace();}
+function sideNotes(st=eff()){if(!Array.isArray(st.sideNotes))st.sideNotes=[];return st.sideNotes;}
+function spaceLabel(k,st=eff()){return avSpaces.find(s=>s.key===k)?.name||st.spaceNames?.[k]||k;}
+function taskById(id,s=state){const sp=getSpace(s);for(const d of DAYS){const t=sp.days[d].find(x=>x.id===id);if(t)return{task:t,day:d};}const dt=sp.dockTasks.find(x=>x.id===id);if(dt)return{task:dt,day:null};return null;}
+function selKey(day,id){return day+'|'+id;}
+function parseSelKey(k){const[day,r]=k.split('|');return{day,taskId:Number(r)};}
+function selRefs(){return[...selTasks].map(parseSelKey).filter(i=>i.day&&Number.isFinite(i.taskId));}
+function ctxSel(){const p=selRefs();if(p.length)return p;if(!taskCtx)return[];return[{day:taskCtx.day,taskId:taskCtx.taskId}];}
+function clrSel(){selTasks=new Set();}
+function clrSpSel(){selSpaces=new Set();}
+function spActSel(){if(selSpaces.size>0)return[...selSpaces].filter(k=>k in state.spaces);return spaceActKey&&(spaceActKey in state.spaces)?[spaceActKey]:[];}
+function ensureBoard(st,id){const sp=getSpace(st);if(!sp.boards[id])sp.boards[id]={zoom:1,clouds:[]};return sp.boards[id];}
 
-function attachTouchContextAction(node, onLongPress, shouldStart = () => true) {
-  let pressTimer = null;
-  let pressPoint = null;
-  let longPressTriggered = false;
-
-  const clearPress = () => {
-    if (pressTimer) clearTimeout(pressTimer);
-    pressTimer = null;
-    pressPoint = null;
-  };
-
-  node.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1) return;
-    if (!shouldStart(e)) return;
-    const touch = e.touches[0];
-    longPressTriggered = false;
-    pressPoint = { x: touch.clientX, y: touch.clientY };
-    pressTimer = setTimeout(() => {
-      if (!pressPoint) return;
-      longPressTriggered = true;
-      onLongPress(pressPoint.x, pressPoint.y, e);
-      clearPress();
-    }, LONG_PRESS_MS);
-  }, { passive: true });
-
-  node.addEventListener('touchmove', (e) => {
-    if (!pressTimer || !pressPoint || e.touches.length !== 1) return;
-    const touch = e.touches[0];
-    const delta = Math.hypot(touch.clientX - pressPoint.x, touch.clientY - pressPoint.y);
-    if (delta > LONG_PRESS_MOVE_PX) clearPress();
-  }, { passive: true });
-
-  node.addEventListener('touchend', clearPress);
-  node.addEventListener('touchcancel', clearPress);
-
-  node.addEventListener('click', (e) => {
-    if (!longPressTriggered) return;
-    longPressTriggered = false;
-    e.preventDefault();
-    e.stopPropagation();
-  }, true);
+// ---------------------------------------------------------------------------
+// LOAD SPACE FROM CLOUD
+// ---------------------------------------------------------------------------
+async function loadSpace(sid){
+  if(!sid||!currentUserId)return;
+  const u=uid();
+  const[calR,dockR,dayR,grpR,bnR,dbnR]=await Promise.all([
+    sbq(sb=>sb.from('calendar_tasks').select('*').eq('space_id',sid).eq('user_id',u).order('position')),
+    sbq(sb=>sb.from('dock_tasks').select('*').eq('space_id',sid).eq('user_id',u).order('position')),
+    sbq(sb=>sb.from('day_settings').select('*').eq('space_id',sid).eq('user_id',u)),
+    sbq(sb=>sb.from('task_groups').select('*').eq('space_id',sid).eq('user_id',u)),
+    sbq(sb=>sb.from('board_notes').select('*').eq('user_id',u)),
+    sbq(sb=>sb.from('dock_board_notes').select('*').eq('user_id',u)),
+  ]);
+  const sp=mkSpace();
+  (calR.data||[]).forEach(row=>{
+    if(!DAYS.includes(row.day))return;
+    sp.days[row.day].push({id:row.id,_db:row.id,title:row.title,color:row.color,pinned:row.pinned,createdAt:new Date(row.created_at).getTime(),taskGroupId:row.task_group_id_local});
+    const ns=(bnR.data||[]).filter(n=>n.calendar_task_id===row.id);
+    sp.boards[row.id]={zoom:row.board_zoom||1,clouds:ns.map(n=>({id:n.id,_db:n.id,text:n.text,x:n.pos_x,y:n.pos_y,groupId:n.group_id}))};
+  });
+  (dockR.data||[]).forEach(row=>{
+    sp.dockTasks.push({id:row.id,_db:row.id,title:row.title,tags:row.tags||[],pinned:row.pinned,createdAt:new Date(row.created_at).getTime()});
+    const ns=(dbnR.data||[]).filter(n=>n.dock_task_id===row.id);
+    sp.boards[row.id]={zoom:row.board_zoom||1,clouds:ns.map(n=>({id:n.id,_db:n.id,text:n.text,x:n.pos_x,y:n.pos_y,groupId:n.group_id}))};
+  });
+  (dayR.data||[]).forEach(row=>{if(DAYS.includes(row.day)){sp.dayBackgrounds[row.day]=row.background_title||null;sp.dayNotes[row.day]=row.notes_text||'';} });
+  sp.taskGroups=(grpR.data||[]).map(g=>({id:g.id,_db:g.id,name:g.name,color:g.color,taskIds:(calR.data||[]).filter(t=>t.task_group_id===g.id).map(t=>t.id)}));
+  state.spaces[sid]=sp;
 }
 
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
-  if (!raw) return defaultState();
-  try {
-    const parsed = JSON.parse(raw);
-    const base = defaultState();
+let _rfPending=false;
+async function refreshSpace(sid){
+  const s=sid||state.activeSpaceId;if(!s)return;
+  if(_rfPending)return;_rfPending=true;
+  setTimeout(()=>{_rfPending=false;},800);
+  await loadSpace(s);renderAll();
+}
 
-    if (parsed.spaces) {
-      const mergedSpaces = {};
-      for (const [key, value] of Object.entries(parsed.spaces)) {
-        mergedSpaces[key] = { ...createSpaceState(), ...(value || {}) };
+// ---------------------------------------------------------------------------
+// COMMIT — mutates state + async cloud write
+// ---------------------------------------------------------------------------
+function commit(desc,mutator,cloud){
+  const prev=state.activeSpaceId;mutator(state);persist();
+  if(prev!==state.activeSpaceId){void savePref(state.activeSpaceId);void fetchTasks();}
+  if(prevIdx!==null)prevIdx=null;
+  hist=hist.slice(0,hIdx+1);
+  hist.push({desc,snap:structuredClone(state),ts:new Date().toISOString()});
+  hIdx=hist.length-1;renderAll();
+  if(cloud)cloud().catch(e=>console.warn('[cloud]',desc,e));
+}
+
+// ---------------------------------------------------------------------------
+// CLOUD OPS — calendar_tasks
+// ---------------------------------------------------------------------------
+async function ciCal(sid,day,task,pos){
+  const{data,error}=await sbq(sb=>sb.from('calendar_tasks').insert({user_id:uid(),space_id:sid,day,title:task.title,color:task.color||null,pinned:task.pinned||false,position:pos??0,task_group_id_local:task.taskGroupId||null}).select('id').single());
+  if(!error&&data?.id){const sp=state.spaces[sid];if(sp){const t=sp.days[day]?.find(x=>x.id===task.id);if(t){t._db=data.id;t.id=data.id;}}}
+  if(error)console.error('[c+cal]',error);
+}
+async function cuCal(id,u2){const{error}=await sbq(sb=>sb.from('calendar_tasks').update({...u2,updated_at:new Date().toISOString()}).eq('id',id));if(error)console.error('[u cal]',error);}
+async function cdCal(id){const{error}=await sbq(sb=>sb.from('calendar_tasks').delete().eq('id',id));if(error)console.error('[d cal]',error);}
+async function upsDay(sid,day,bg,notes){const{error}=await sbq(sb=>sb.from('day_settings').upsert({user_id:uid(),space_id:sid,day,background_title:bg||null,notes_text:notes||''},{onConflict:'space_id,day'}));if(error)console.error('[day]',error);}
+
+// ---------------------------------------------------------------------------
+// CLOUD OPS — dock_tasks
+// ---------------------------------------------------------------------------
+async function ciDock(sid,task,pos){
+  const{data,error}=await sbq(sb=>sb.from('dock_tasks').insert({user_id:uid(),space_id:sid,title:task.title,tags:task.tags||[],pinned:task.pinned||false,position:pos??0}).select('id').single());
+  if(!error&&data?.id){const sp=state.spaces[sid];if(sp){const t=sp.dockTasks.find(x=>x.id===task.id);if(t){t._db=data.id;t.id=data.id;}}}
+  if(error)console.error('[c+dock]',error);
+}
+async function cuDock(id,u2){const{error}=await sbq(sb=>sb.from('dock_tasks').update({...u2,updated_at:new Date().toISOString()}).eq('id',id));if(error)console.error('[u dock]',error);}
+async function cdDock(id){const{error}=await sbq(sb=>sb.from('dock_tasks').delete().eq('id',id));if(error)console.error('[d dock]',error);}
+
+// ---------------------------------------------------------------------------
+// CLOUD OPS — board_notes
+// ---------------------------------------------------------------------------
+async function ciBN(calId,cloud){
+  const{data,error}=await sbq(sb=>sb.from('board_notes').insert({user_id:uid(),calendar_task_id:calId,text:cloud.text||'',pos_x:cloud.x,pos_y:cloud.y,group_id:cloud.groupId||null}).select('id').single());
+  if(!error&&data?.id){for(const sp of Object.values(state.spaces)){const b=sp.boards[calId];if(b){const c=b.clouds.find(x=>x.id===cloud.id);if(c){c._db=data.id;c.id=data.id;}}}}
+  if(error)console.error('[c+bn]',error);
+}
+async function cuBN(id,u2){const{error}=await sbq(sb=>sb.from('board_notes').update({...u2,updated_at:new Date().toISOString()}).eq('id',id));if(error)console.error('[u bn]',error);}
+async function cdBN(id){const{error}=await sbq(sb=>sb.from('board_notes').delete().eq('id',id));if(error)console.error('[d bn]',error);}
+async function ciDBN(dockId,cloud){
+  const{data,error}=await sbq(sb=>sb.from('dock_board_notes').insert({user_id:uid(),dock_task_id:dockId,text:cloud.text||'',pos_x:cloud.x,pos_y:cloud.y,group_id:cloud.groupId||null}).select('id').single());
+  if(!error&&data?.id){for(const sp of Object.values(state.spaces)){const b=sp.boards[dockId];if(b){const c=b.clouds.find(x=>x.id===cloud.id);if(c){c._db=data.id;c.id=data.id;}}}}
+  if(error)console.error('[c+dbn]',error);
+}
+
+// ---------------------------------------------------------------------------
+// REALTIME
+// ---------------------------------------------------------------------------
+let rtChs=[];
+function unsubAll(){const sb=getSB();if(sb)rtChs.forEach(ch=>sb.removeChannel(ch));rtChs=[];}
+function subSpace(sid){
+  unsubAll();const sb=getSB();if(!sb||!sid)return;
+  const onChange=()=>refreshSpace(sid);
+  ['calendar_tasks','dock_tasks','day_settings','task_groups'].forEach(tbl=>{
+    const ch=sb.channel(tbl+'-'+sid).on('postgres_changes',{event:'*',schema:'public',table:tbl,filter:'space_id=eq.'+sid},onChange).subscribe();
+    rtChs.push(ch);
+  });
+  const u=uid();
+  ['board_notes','dock_board_notes'].forEach(tbl=>{
+    const ch=sb.channel(tbl+'-'+u).on('postgres_changes',{event:'*',schema:'public',table:tbl,filter:'user_id=eq.'+u},onChange).subscribe();
+    rtChs.push(ch);
+  });
+  const tch=sb.channel('tasks-'+u).on('postgres_changes',{event:'*',schema:'public',table:'tasks',filter:'user_id=eq.'+u},()=>fetchTasks()).subscribe();
+  rtChs.push(tch);
+}
+
+// ---------------------------------------------------------------------------
+// SPACES
+// ---------------------------------------------------------------------------
+function normSp(r){if(!r?.id)return null;return{key:String(r.id),name:r.name||String(r.id)};}
+function fromState(st=state){return Object.keys(st.spaces||{}).map(k=>({key:k,name:st.spaceNames?.[k]||k}));}
+function syncSpaces(spaces,st=state){
+  const next=Array.isArray(spaces)?spaces.filter(s=>s?.key):fromState(st);
+  const keys=new Set(next.map(({key})=>key));if(!st.spaceNames)st.spaceNames={};
+  Object.keys(st.spaces||{}).forEach(k=>{if(!keys.has(k))delete st.spaces[k];});
+  Object.keys(st.spaceNames).forEach(k=>{if(!keys.has(k))delete st.spaceNames[k];});
+  next.forEach(({key,name})=>{if(!st.spaces[key])st.spaces[key]=mkSpace();st.spaceNames[key]=name||key;});
+  if(!(st.activeSpaceId in st.spaces))st.activeSpaceId=next[0]?.key||null;
+  return next;
+}
+function toUUID(k){const r=typeof k==='string'?k.trim():'';return/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(r)?r:crypto.randomUUID();}
+async function loadSpaces(){
+  const{data,error}=await sbq(sb=>sb.from('user_spaces').select('*').eq('user_id',uid()));
+  if(error){console.warn('[sp]',error);AUTH_KEYS.forEach(k=>localStorage.removeItem(k));localStorage.removeItem('is_auth');currentUserId=null;state=mkState();avSpaces=[];syncLogout();await showLoginModal();return[];}
+  return(data||[]).map(normSp).filter(Boolean);
+}
+async function addSpace(key,name){
+  if(!isAuth())return null;
+  const id=toUUID(key);
+  const{error}=await sbq(sb=>sb.from('user_spaces').insert({id,user_id:uid(),name:String(name||key)}));
+  if(error){console.warn('[sp+]',error);alert('Ошибка: '+error.message);return null;}
+  return id;
+}
+async function delSpaces(keys=[]){
+  const ks=keys.filter(Boolean);if(!ks.length||!currentUserId)return true;
+  const{error}=await sbq(sb=>sb.from('user_spaces').delete().eq('user_id',uid()).in('id',ks.map(String)));
+  if(error){console.warn('[sp-]',error);return false;}return true;
+}
+async function loadPref(){
+  const{data,error}=await sbq(sb=>sb.from('user_settings').select('current_space_id').eq('tg_id',uid()).maybeSingle());
+  if(error)return null;const v=data?.current_space_id;return typeof v==='string'&&v.trim()?v.trim():null;
+}
+async function savePref(sid){
+  if(!currentUserId||!sid)return;
+  await sbq(sb=>sb.from('user_settings').upsert({tg_id:uid(),current_space_id:String(sid)},{onConflict:'tg_id'}));
+}
+// ---------------------------------------------------------------------------
+// TELEGRAM TASKS
+// ---------------------------------------------------------------------------
+function stripMark(t=''){return t.replace(/^\[(?:NOTES|DAY|BOARD)\]\s*/i,'').trim();}
+function detectTarget(t=''){if(/^\[DAY\]/i.test(t))return'day';if(/^\[BOARD\]/i.test(t))return'board';return'notes';}
+function withMark(t='',target='notes'){return(target==='day'?'[DAY]':target==='board'?'[BOARD]':'[NOTES]')+' '+stripMark(t);}
+function esc(v=''){return v.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');}
+async function updTg(id,u){return sbq(sb=>sb.from('tasks').update(u).eq('id',id));}
+async function delTg(id){return sbq(sb=>sb.from('tasks').delete().eq('id',id));}
+
+async function fetchTasks(){
+  const list=document.getElementById('telegramTasksList');if(!list)return;
+  if(!currentUserId||!isAuth()){list.innerHTML='<li>Войдите для просмотра.</li>';return;}
+  list.innerHTML='<li>Загрузка...</li>';
+  const{data,error}=await sbq(sb=>sb.from('tasks').select('*').eq('column_id',INBOX_COL).order('created_at',{ascending:false}));
+  if(error){list.innerHTML='<li>Ошибка: '+error.message+'</li>';return;}
+  if(!data?.length){list.innerHTML='<li>Пока нет заметок.</li>';return;}
+  list.innerHTML='';
+  data.forEach(task=>{
+    const li=document.createElement('li');li.className='telegram-task-item';li.dataset.taskId=String(task.id);
+    const txt=stripMark(task.text||''),tgt=detectTarget(task.text||'');
+    const tgtLbl=tgt==='day'?'день':tgt==='board'?'доска':'заметки';
+    li.innerHTML='<div class="telegram-task-row"><span class="telegram-task-title">'+(task.is_completed?'✅':'⬜️')+' '+esc(txt)+'</span><small class="telegram-task-target">'+tgtLbl+'</small></div><div class="telegram-task-actions"><button type="button" data-action="edit" class="telegram-task-edit">✏️</button><button type="button" data-action="to-day">В день</button><button type="button" data-action="delete">Удалить</button></div><div class="telegram-transfer-menu hidden" data-menu="day"></div>';
+    const dm=li.querySelector('[data-menu="day"]');dm.innerHTML=DAYS.map(d=>'<button type="button" data-day="'+d+'">'+d+'</button>').join('');
+    const closeM=()=>dm.classList.add('hidden');
+    li.addEventListener('click',async ev=>{
+      const action=ev.target?.dataset?.action,day=ev.target?.dataset?.day;
+      if(action==='edit'){
+        const span=li.querySelector('.telegram-task-title');
+        const inp=document.createElement('input');inp.type='text';inp.className='telegram-task-input';inp.value=txt;span.replaceWith(inp);inp.focus();inp.select();
+        let saved=false;
+        const save=async()=>{if(saved)return;saved=true;const nt=inp.value.trim();if(!nt){inp.replaceWith(span);return;}const{error}=await updTg(task.id,{text:withMark(nt,tgt)});if(error){alert('Ошибка: '+error.message);inp.replaceWith(span);return;}await fetchTasks();};
+        inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();save();}else if(e.key==='Escape'){saved=true;inp.replaceWith(span);}});
+        inp.addEventListener('blur',()=>save());return;
       }
-      const mergedSideNotes = Array.isArray(parsed.sideNotes)
-        ? parsed.sideNotes
-        : Object.values(mergedSpaces).flatMap((space) => Array.isArray(space.sideNotes) ? space.sideNotes : []);
-
-      return {
-        ...base,
-        ...parsed,
-        sideNotes: mergedSideNotes,
-        activeSpaceId: parsed.activeSpaceId ?? parsed.activeSpace ?? base.activeSpaceId,
-        spaceNames: { ...base.spaceNames, ...(parsed.spaceNames || {}) },
-        spaces: mergedSpaces
-      };
-    }
-
-    return {
-      ...base,
-      ...parsed,
-      sideNotes: Array.isArray(parsed.sideNotes) ? parsed.sideNotes : [],
-      activeSpaceId: parsed.activeSpaceId ?? parsed.activeSpace ?? null,
-      spaces: {}
-    };
-  } catch {
-    return defaultState();
-  }
-}
-
-function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function getActiveSpace(st = effectiveState()) {
-  const fallbackKey = Object.keys(st.spaces || {})[0] || null;
-  const key = st.activeSpaceId in st.spaces ? st.activeSpaceId : fallbackKey;
-  return (key && st.spaces[key]) || createSpaceState();
-}
-
-function getGlobalSideNotes(st = effectiveState()) {
-  if (!Array.isArray(st.sideNotes)) st.sideNotes = [];
-  return st.sideNotes;
-}
-
-function getSpaceLabel(key, st = effectiveState()) {
-  const availableLabel = availableSpaces.find((space) => space.key === key)?.name;
-  return availableLabel || st.spaceNames?.[key] || key;
-}
-
-function getTaskById(taskId, s = state) {
-  const space = getActiveSpace(s);
-  for (const day of DAYS) {
-    const task = space.days[day].find((t) => t.id === taskId);
-    if (task) return { task, day };
-  }
-
-  const dockTask = space.dockTasks.find((t) => t.id === taskId);
-  if (dockTask) return { task: dockTask, day: null };
-
-  return null;
-}
-
-function getTaskSelectionKey(day, taskId) {
-  return `${day}|${taskId}`;
-}
-
-function parseTaskSelectionKey(key) {
-  const [day, taskIdRaw] = key.split('|');
-  return { day, taskId: Number(taskIdRaw) };
-}
-
-function getSelectedTaskRefs() {
-  return [...selectedTaskKeys].map(parseTaskSelectionKey).filter((item) => item.day && Number.isFinite(item.taskId));
-}
-
-function getTaskContextSelection() {
-  const picks = getSelectedTaskRefs();
-  if (picks.length > 0) return picks;
-  if (!taskContextTarget) return [];
-  return [{ day: taskContextTarget.day, taskId: taskContextTarget.taskId }];
-}
-
-function clearTaskSelection() {
-  selectedTaskKeys = new Set();
-}
-
-function clearSpaceSelection() {
-  selectedSpaceKeys = new Set();
-}
-
-function getSpaceActionSelection() {
-  if (selectedSpaceKeys.size > 0) {
-    return [...selectedSpaceKeys].filter((key) => key in state.spaces);
-  }
-  return spaceActionTargetKey && (spaceActionTargetKey in state.spaces) ? [spaceActionTargetKey] : [];
-}
-
-function ensureBoard(st, taskId) {
-  const space = getActiveSpace(st);
-  if (!space.boards[taskId]) {
-    space.boards[taskId] = { zoom: 1, clouds: [] };
-  }
-  return space.boards[taskId];
-}
-
-function commit(description, mutator) {
-  const previousActiveSpace = state.activeSpaceId;
-  mutator(state);
-  persist();
-  if (previousActiveSpace !== state.activeSpaceId) {
-    void persistCurrentSpacePreference(state.activeSpaceId);
-    void fetchTasks();
-  }
-  if (previewIndex !== null) previewIndex = null;
-  history = history.slice(0, currentHistoryIndex + 1);
-  history.push({ description, snapshot: structuredClone(state), ts: new Date().toISOString() });
-  currentHistoryIndex = history.length - 1;
-  renderAll();
-}
-
-function effectiveState() {
-  return previewIndex === null ? state : history[previewIndex].snapshot;
-}
-
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  const toggle = document.getElementById('themeToggle');
-  toggle.textContent = theme === 'dark' ? 'Светлая тема' : 'Тёмная тема';
-}
-
-function setHistoryOpen(open) {
-  isHistoryOpen = open;
-  const panel = document.getElementById('historyPanel');
-  const toggle = document.getElementById('toggleHistory');
-  panel.classList.toggle('open', open);
-  toggle.setAttribute('aria-expanded', String(open));
-  toggle.textContent = open ? 'Скрыть историю' : 'История';
-}
-
-function setInstructionsOpen(open) {
-  isInstructionsOpen = open;
-  const panel = document.getElementById('instructionsPanel');
-  const toggle = document.getElementById('toggleInstructions');
-  if (!panel || !toggle) return;
-  panel.classList.toggle('open', open);
-  panel.setAttribute('aria-hidden', String(!open));
-  toggle.setAttribute('aria-expanded', String(open));
-  toggle.textContent = open ? 'Скрыть инструкцию' : 'Инструкция';
-}
-
-function setDockMenuOpen(open) {
-  isDockMenuOpen = open;
-  const dock = document.getElementById('taskDock');
-  const toggle = document.getElementById('toggleDockMenu');
-  if (dock) dock.classList.toggle('hidden', !open);
-  if (toggle) toggle.setAttribute('aria-expanded', String(open));
-}
-
-function setNotesPanelOpen(open) {
-  isNotesPanelOpen = open;
-  const panel = document.getElementById('notesPanel');
-  const toggle = document.getElementById('toggleNotesPanel');
-  if (!panel || !toggle) return;
-  panel.classList.toggle('open', open);
-  toggle.setAttribute('aria-expanded', String(open));
-}
-
-function setSpaceMenuOpen(open) {
-  isSpaceMenuOpen = open;
-  const menu = document.getElementById('spaceMenu');
-  const toggle = document.getElementById('spaceMenuToggle');
-  menu.classList.toggle('hidden', !open);
-  toggle.setAttribute('aria-expanded', String(open));
-}
-
-function syncLogoutButtonVisibility() {
-  const logoutButton = document.getElementById('logout-btn');
-  if (!logoutButton) return;
-  logoutButton.classList.toggle('hidden', !isUserAuthenticated());
-}
-
-function handleLogout() {
-  const confirmed = window.confirm('Вы уверены, что хотите выйти ?');
-  if (!confirmed) return;
-
-  AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
-  localStorage.removeItem('is_auth');
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(LEGACY_STORAGE_KEY);
-  location.reload();
-}
-
-function updateSpaceButton(spaceKey, st = effectiveState()) {
-  const label = getSpaceLabel(spaceKey, st);
-  document.getElementById('spaceMenuToggle').textContent = `Пространство: ${label}`;
-  const current = document.getElementById('spaceMenuCurrentLabel');
-  if (current) current.textContent = label;
-  document.title = label ? `${label} — Календарь` : 'Календарь';
-}
-
-function renderSpaceOptions(st = effectiveState()) {
-  const list = document.querySelector('#spaceMenu .space-list');
-  if (!list) return;
-  list.innerHTML = '';
-  const spaceItems = Array.isArray(availableSpaces) && availableSpaces.length > 0
-    ? availableSpaces
-    : buildAvailableSpacesFromState(st);
-  spaceItems.forEach(({ key, name }) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'space-option';
-    btn.dataset.space = key;
-    btn.setAttribute('role', 'menuitem');
-    btn.textContent = name || getSpaceLabel(key, st);
-    if (selectedSpaceKeys.has(key)) btn.classList.add('selected');
-    list.append(btn);
+      if(action==='delete'){if(!confirm('Удалить?'))return;await delTg(task.id);await fetchTasks();return;}
+      if(action==='to-day'){const o=dm.classList.contains('hidden');closeM();if(o)dm.classList.remove('hidden');return;}
+      if(day){
+        closeM();const sid=state.activeSpaceId;
+        const nt={id:Date.now(),title:txt,color:null,pinned:false,createdAt:Date.now(),taskGroupId:null};
+        commit('TG→день «'+day+'»',st=>{getSpace(st).days[day].push(nt);},()=>ciCal(sid,day,nt,getSpace(state).days[day].length-1));
+        await updTg(task.id,{text:withMark(txt,'day')});await fetchTasks();
+      }
+    });list.append(li);
   });
 }
 
-function moveTask(st, fromDay, toDay, taskId, targetTaskId = null, placeAfter = false) {
-  const space = getActiveSpace(st);
-  const source = space.days[fromDay];
-  const destination = space.days[toDay];
-  const fromIdx = source.findIndex((t) => t.id === taskId);
-  if (fromIdx < 0) return;
+// ---------------------------------------------------------------------------
+// UI HELPERS
+// ---------------------------------------------------------------------------
+function applyTheme(t){document.documentElement.dataset.theme=t;const el=document.getElementById('themeToggle');if(el)el.textContent=t==='dark'?'Светлая тема':'Тёмная тема';}
+function setHist(o){histOpen=o;const p=document.getElementById('historyPanel'),t=document.getElementById('toggleHistory');p.classList.toggle('open',o);t.setAttribute('aria-expanded',String(o));t.textContent=o?'Скрыть историю':'История';}
+function setInstr(o){instrOpen=o;const p=document.getElementById('instructionsPanel'),t=document.getElementById('toggleInstructions');if(!p||!t)return;p.classList.toggle('open',o);p.setAttribute('aria-hidden',String(!o));t.setAttribute('aria-expanded',String(o));t.textContent=o?'Скрыть':'Инструкция';}
+function setDock(o){dockOpen=o;const d=document.getElementById('taskDock'),t=document.getElementById('toggleDockMenu');if(d)d.classList.toggle('hidden',!o);if(t)t.setAttribute('aria-expanded',String(o));}
+function setNotes(o){notesOpen=o;const p=document.getElementById('notesPanel'),t=document.getElementById('toggleNotesPanel');if(!p||!t)return;p.classList.toggle('open',o);t.setAttribute('aria-expanded',String(o));}
+function setSpMenu(o){spaceMenuOpen=o;const m=document.getElementById('spaceMenu'),t=document.getElementById('spaceMenuToggle');m.classList.toggle('hidden',!o);t.setAttribute('aria-expanded',String(o));}
+function syncLogout(){const b=document.getElementById('logout-btn');if(b)b.classList.toggle('hidden',!isAuth());}
+function doLogout(){if(!confirm('Выйти?'))return;AUTH_KEYS.forEach(k=>localStorage.removeItem(k));localStorage.removeItem('is_auth');unsubAll();location.reload();}
+function updSpBtn(k,st=eff()){const l=spaceLabel(k,st);document.getElementById('spaceMenuToggle').textContent='Пространство: '+l;const c=document.getElementById('spaceMenuCurrentLabel');if(c)c.textContent=l;document.title=l?l+' — Календарь':'Календарь';}
+function renderSpOpts(st=eff()){const list=document.querySelector('#spaceMenu .space-list');if(!list)return;list.innerHTML='';const items=avSpaces.length>0?avSpaces:fromState(st);items.forEach(({key,name})=>{const b=document.createElement('button');b.type='button';b.className='space-option';b.dataset.space=key;b.setAttribute('role','menuitem');b.textContent=name||spaceLabel(key,st);if(selSpaces.has(key))b.classList.add('selected');list.append(b);});}
+function setSpActMenu(o,x=0,y=0){spaceActOpen=o;const m=document.getElementById('spaceActionMenu');if(!m)return;if(!o){m.classList.add('hidden');m.setAttribute('aria-hidden','true');spaceActKey=null;return;}const mx=window.innerWidth-m.offsetWidth-10,my=window.innerHeight-m.offsetHeight-10;m.style.left=Math.max(10,Math.min(x,mx))+'px';m.style.top=Math.max(10,Math.min(y,my))+'px';m.classList.remove('hidden');m.setAttribute('aria-hidden','false');}
+function setTaskCtx(o,x=0,y=0){taskCtxOpen=o;const m=document.getElementById('taskContextMenu');if(!m)return;if(!o){m.classList.add('hidden');m.setAttribute('aria-hidden','true');taskCtx=null;return;}const mx=window.innerWidth-m.offsetWidth-10,my=window.innerHeight-m.offsetHeight-10;m.style.left=Math.max(10,Math.min(x,mx))+'px';m.style.top=Math.max(10,Math.min(y,my))+'px';m.classList.remove('hidden');m.setAttribute('aria-hidden','false');}
+function openCtx(x,y,day,task){const k=selKey(day,task.id);if(!selTasks.has(k))selTasks=new Set([k]);taskCtx={day,taskId:task.id};const pin=document.getElementById('ctxPin'),col=document.getElementById('ctxColor'),grp=document.getElementById('ctxCreateGroup');if(pin)pin.textContent=task.pinned?'Открепить':'Закрепить';if(col)col.value=task.color||'#5a6cff';if(grp)grp.classList.toggle('hidden',ctxSel().length<2);setTaskCtx(true,x,y);renderCal();}
 
-  const [task] = source.splice(fromIdx, 1);
-  if (targetTaskId === null) {
-    destination.push(task);
-    return;
-  }
+// ---------------------------------------------------------------------------
+// DRAG HELPERS
+// ---------------------------------------------------------------------------
+function moveTask(st,fd,td,id,targetId=null,after=false){const sp=getSpace(st),src=sp.days[fd],dst=sp.days[td];const fi=src.findIndex(t=>t.id===id);if(fi<0)return;const[task]=src.splice(fi,1);if(targetId===null){dst.push(task);return;}const ti=dst.findIndex(t=>t.id===targetId);if(ti<0){dst.push(task);return;}dst.splice(after?ti+1:ti,0,task);}
+function cloudTitle(t){return(t||'').split('
+').map(l=>l.trim()).find(Boolean)||'Задача';}
+function moveCloud2Day(st,btid,cid,today,targetId=null,after=false){const a=getSpace(st),b=ensureBoard(st,btid);const ci=b.clouds.findIndex(c=>c.id===cid);if(ci<0)return;const[cloud]=b.clouds.splice(ci,1);const task={id:st.nextTaskId++,title:cloudTitle(cloud.text),color:null,pinned:false,createdAt:Date.now(),taskGroupId:null};const dst=a.days[today];if(targetId===null){dst.push(task);return;}const ti=dst.findIndex(t=>t.id===targetId);if(ti<0){dst.push(task);return;}dst.splice(after?ti+1:ti,0,task);}
+function moveNote2Day(st,nid,today,targetId=null,after=false){const a=getSpace(st),ns=sideNotes(st);const ni=ns.findIndex(n=>n.id===nid);if(ni<0)return;const[note]=ns.splice(ni,1);const task={id:st.nextTaskId++,title:cloudTitle(note.text),color:null,pinned:false,createdAt:Date.now(),taskGroupId:null};const dst=a.days[today];if(targetId===null){dst.push(task);return;}const ti=dst.findIndex(t=>t.id===targetId);if(ti<0){dst.push(task);return;}dst.splice(after?ti+1:ti,0,task);}
+function moveDock(st,id,targetId=null,after=false){const sp=getSpace(st);const fi=sp.dockTasks.findIndex(t=>t.id===id);if(fi<0)return;const[task]=sp.dockTasks.splice(fi,1);if(targetId===null){sp.dockTasks.push(task);return;}const ti=sp.dockTasks.findIndex(t=>t.id===targetId);if(ti<0){sp.dockTasks.push(task);return;}sp.dockTasks.splice(after?ti+1:ti,0,task);}
 
-  const targetIdx = destination.findIndex((t) => t.id === targetTaskId);
-  if (targetIdx < 0) {
-    destination.push(task);
-    return;
-  }
+// ---------------------------------------------------------------------------
+// LONG PRESS
+// ---------------------------------------------------------------------------
+function touchCtx(node,fn,ok=()=>true){let pt=null,pr=null,fired=false;const clr=()=>{if(pr)clearTimeout(pr);pr=null;pt=null;};node.addEventListener('touchstart',e=>{if(e.touches.length!==1||!ok(e))return;const t=e.touches[0];fired=false;pt={x:t.clientX,y:t.clientY};pr=setTimeout(()=>{if(!pt)return;fired=true;fn(pt.x,pt.y,e);clr();},LONG_MS);},{passive:true});node.addEventListener('touchmove',e=>{if(!pr||!pt||e.touches.length!==1)return;const t=e.touches[0];if(Math.hypot(t.clientX-pt.x,t.clientY-pt.y)>LONG_PX)clr();},{passive:true});node.addEventListener('touchend',clr);node.addEventListener('touchcancel',clr);node.addEventListener('click',e=>{if(!fired)return;fired=false;e.preventDefault();e.stopPropagation();},true);}
 
-  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
-  destination.splice(insertIdx, 0, task);
+// ---------------------------------------------------------------------------
+// INLINE EDIT
+// ---------------------------------------------------------------------------
+function inlineEdit(node,task,day){
+  const tb=node.querySelector('.open-board');if(!tb)return;
+  const inp=document.createElement('input');inp.className='task-title-input hidden';inp.type='text';inp.value=task.title;inp.maxLength=200;tb.insertAdjacentElement('afterend',inp);
+  let ed=false;
+  const start=()=>{ed=true;inp.value=task.title;tb.classList.add('hidden');inp.classList.remove('hidden');inp.focus();inp.select();};
+  const finish=(save)=>{if(!ed)return;ed=false;inp.classList.add('hidden');tb.classList.remove('hidden');if(!save)return;const c=inp.value.trim();if(!c||c===task.title)return;const sid=state.activeSpaceId,db=task._db||task.id;commit('Редакт «'+task.title+'»',st=>{const t=getSpace(st).days[day]?.find(x=>x.id===task.id);if(t)t.title=c;},()=>cuCal(db,{title:c}));};
+  node.querySelector('.edit').addEventListener('click',()=>start());
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();finish(true);}if(e.key==='Escape'){e.preventDefault();finish(false);}});
+  inp.addEventListener('blur',()=>finish(true));
 }
+function bgPat(title){const c=(title||'').trim();if(!c)return'';const row=(c+'   ✶   ').repeat(14).trim();return Array.from({length:28},()=>row).join('
+');}
 
-function extractTaskTitleFromCloudText(text) {
-  const firstLine = (text || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .find(Boolean);
-  return firstLine || 'Задача из заметки';
-}
-
-function moveCloudToDay(st, boardTaskId, cloudId, toDay, targetTaskId = null, placeAfter = false) {
-  const active = getActiveSpace(st);
-  const board = ensureBoard(st, boardTaskId);
-  const cloudIdx = board.clouds.findIndex((c) => c.id === cloudId);
-  if (cloudIdx < 0) return;
-
-  const [cloud] = board.clouds.splice(cloudIdx, 1);
-  const taskFromCloud = {
-    id: st.nextTaskId++,
-    title: extractTaskTitleFromCloudText(cloud.text),
-    color: null,
-    pinned: false,
-    createdAt: Date.now(),
-    taskGroupId: null
-  };
-
-  const destination = active.days[toDay];
-  if (targetTaskId === null) {
-    destination.push(taskFromCloud);
-    return;
-  }
-
-  const targetIdx = destination.findIndex((t) => t.id === targetTaskId);
-  if (targetIdx < 0) {
-    destination.push(taskFromCloud);
-    return;
-  }
-
-  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
-  destination.splice(insertIdx, 0, taskFromCloud);
-}
-
-function moveSideNoteToDay(st, noteId, toDay, targetTaskId = null, placeAfter = false) {
-  const active = getActiveSpace(st);
-  const sideNotes = getGlobalSideNotes(st);
-  const noteIdx = sideNotes.findIndex((n) => n.id === noteId);
-  if (noteIdx < 0) return;
-
-  const [note] = sideNotes.splice(noteIdx, 1);
-  const task = {
-    id: st.nextTaskId++,
-    title: extractTaskTitleFromCloudText(note.text),
-    color: null,
-    pinned: false,
-    createdAt: Date.now(),
-    taskGroupId: null
-  };
-
-  const destination = active.days[toDay];
-  if (targetTaskId === null) {
-    destination.push(task);
-    return;
-  }
-
-  const targetIdx = destination.findIndex((t) => t.id === targetTaskId);
-  if (targetIdx < 0) {
-    destination.push(task);
-    return;
-  }
-
-  const insertIdx = placeAfter ? targetIdx + 1 : targetIdx;
-  destination.splice(insertIdx, 0, task);
-}
-
-function enableInlineTaskTitleEdit(node, task, day) {
-  const titleButton = node.querySelector('.open-board');
-  if (!titleButton) return;
-
-  const input = document.createElement('input');
-  input.className = 'task-title-input hidden';
-  input.type = 'text';
-  input.value = task.title;
-  input.maxLength = 200;
-  titleButton.insertAdjacentElement('afterend', input);
-
-  let editing = false;
-  const startEdit = () => {
-    editing = true;
-    input.value = task.title;
-    titleButton.classList.add('hidden');
-    input.classList.remove('hidden');
-    input.focus();
-    input.select();
-  };
-
-  const finishEdit = (save) => {
-    if (!editing) return;
-    editing = false;
-    input.classList.add('hidden');
-    titleButton.classList.remove('hidden');
-
-    if (!save) return;
-    const cleanTitle = input.value.trim();
-    if (!cleanTitle || cleanTitle === task.title) return;
-    commit(`Задача «${task.title}» изменена`, (st) => {
-      const t = getActiveSpace(st).days[day].find((x) => x.id === task.id);
-      if (!t) return;
-      t.title = cleanTitle;
-    });
-  };
-
-  node.querySelector('.edit').addEventListener('click', () => startEdit());
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      finishEdit(true);
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      finishEdit(false);
-    }
-  });
-  input.addEventListener('blur', () => finishEdit(true));
-}
-
-
-function buildDayBackgroundPattern(title) {
-  const clean = (title || '').trim();
-  if (!clean) return '';
-  const chunk = `${clean}   ✦   `;
-  const row = chunk.repeat(14).trim();
-  return Array.from({ length: 28 }, () => row).join('\n');
-}
-
-function setTaskContextMenuOpen(open, x = 0, y = 0) {
-  isTaskContextMenuOpen = open;
-  const menu = document.getElementById('taskContextMenu');
-  if (!menu) return;
-  if (!open) {
-    menu.classList.add('hidden');
-    menu.setAttribute('aria-hidden', 'true');
-    taskContextTarget = null;
-    return;
-  }
-
-  const maxX = window.innerWidth - menu.offsetWidth - 10;
-  const maxY = window.innerHeight - menu.offsetHeight - 10;
-  menu.style.left = `${Math.max(10, Math.min(x, maxX))}px`;
-  menu.style.top = `${Math.max(10, Math.min(y, maxY))}px`;
-  menu.classList.remove('hidden');
-  menu.setAttribute('aria-hidden', 'false');
-}
-
-function openTaskContextMenu(x, y, day, task) {
-  const key = getTaskSelectionKey(day, task.id);
-  if (!selectedTaskKeys.has(key)) {
-    selectedTaskKeys = new Set([key]);
-  }
-  taskContextTarget = { day, taskId: task.id };
-  const selection = getTaskContextSelection();
-  const pinBtn = document.getElementById('ctxPin');
-  const colorInput = document.getElementById('ctxColor');
-  const groupBtn = document.getElementById('ctxCreateGroup');
-  if (pinBtn) pinBtn.textContent = task.pinned ? 'Открепить' : 'Закрепить';
-  if (colorInput) colorInput.value = task.color || '#5a6cff';
-  if (groupBtn) groupBtn.classList.toggle('hidden', selection.length < 2);
-  setTaskContextMenuOpen(true, x, y);
-  renderCalendar();
-}
-
-function setSpaceActionMenuOpen(open, x = 0, y = 0) {
-  isSpaceActionMenuOpen = open;
-  const menu = document.getElementById('spaceActionMenu');
-  if (!menu) return;
-  if (!open) {
-    menu.classList.add('hidden');
-    menu.setAttribute('aria-hidden', 'true');
-    spaceActionTargetKey = null;
-    return;
-  }
-
-  const maxX = window.innerWidth - menu.offsetWidth - 10;
-  const maxY = window.innerHeight - menu.offsetHeight - 10;
-  menu.style.left = `${Math.max(10, Math.min(x, maxX))}px`;
-  menu.style.top = `${Math.max(10, Math.min(y, maxY))}px`;
-  menu.classList.remove('hidden');
-  menu.setAttribute('aria-hidden', 'false');
-}
-
-function normalizeImportedSpaceData(raw) {
-  const source = raw && typeof raw === 'object' && raw.data && typeof raw.data === 'object' ? raw.data : raw;
-  const base = createSpaceState();
-  if (!source || typeof source !== 'object') return base;
-  return {
-    days: { ...base.days, ...(source.days || {}) },
-    dayBackgrounds: { ...base.dayBackgrounds, ...(source.dayBackgrounds || {}) },
-    dayNotes: { ...base.dayNotes, ...(source.dayNotes || {}) },
-    boards: { ...base.boards, ...(source.boards || {}) },
-    dockTasks: Array.isArray(source.dockTasks) ? source.dockTasks : [],
-    taskGroups: Array.isArray(source.taskGroups) ? source.taskGroups : [],
-    sideNotes: Array.isArray(source.sideNotes) ? source.sideNotes : []
-  };
-}
-
-function extractImportedSpaces(payload) {
-  if (!payload || typeof payload !== 'object') return [];
-
-  const normalizeEntry = (entry, fallbackId = null) => {
-    if (!entry || typeof entry !== 'object') return null;
-    const importedIdCandidates = [entry.id, entry.spaceId, entry.spaceKey, entry.data?.id, entry.data?.spaceId, entry.data?.spaceKey, fallbackId];
-    const key = importedIdCandidates.find((value) => typeof value === 'string' && value.trim())?.trim();
-    if (!key) return null;
-
-    const label = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : key;
-    return {
-      key,
-      name: label,
-      data: normalizeImportedSpaceData(entry)
-    };
-  };
-
-  if (Array.isArray(payload.spaces)) {
-    return payload.spaces.map((entry) => normalizeEntry(entry)).filter(Boolean);
-  }
-
-  if (payload.spaces && typeof payload.spaces === 'object') {
-    return Object.entries(payload.spaces).map(([spaceId, entry]) => normalizeEntry(entry, spaceId)).filter(Boolean);
-  }
-
-  const singleEntry = normalizeEntry(payload);
-  return singleEntry ? [singleEntry] : [];
-}
-
-function downloadJson(filename, payload) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-function buildTaskNode(task, day, handleDayDrop) {
-  const tpl = document.getElementById('taskTemplate');
-  const node = tpl.content.firstElementChild.cloneNode(true);
-  if (task.pinned) node.classList.add('pinned');
-  if (selectedTaskKeys.has(getTaskSelectionKey(day, task.id))) node.classList.add('selected');
-  node.querySelector('.open-board').textContent = task.title;
-  node.querySelector('.open-board').addEventListener('click', (e) => {
-    if (e.ctrlKey) return;
-    openBoard(task.id);
-  });
-  enableInlineTaskTitleEdit(node, task, day);
-
-  if (task.color) {
-    node.style.setProperty('--task-color', task.color);
-  }
-
-  node.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    if (!e.ctrlKey) return;
-    if (e.target.closest('input, textarea')) return;
-    e.preventDefault();
-    const key = getTaskSelectionKey(day, task.id);
-    if (selectedTaskKeys.has(key)) {
-      selectedTaskKeys.delete(key);
-    } else {
-      selectedTaskKeys.add(key);
-    }
-    renderCalendar();
-  });
-
-  node.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    const key = getTaskSelectionKey(day, task.id);
-    if (!selectedTaskKeys.has(key)) selectedTaskKeys = new Set([key]);
-    openTaskContextMenu(e.clientX, e.clientY, day, task);
-  });
-
-  attachTouchContextAction(node, (x, y) => {
-    const key = getTaskSelectionKey(day, task.id);
-    if (!selectedTaskKeys.has(key)) selectedTaskKeys = new Set([key]);
-    openTaskContextMenu(x, y, day, task);
-  }, (e) => !e.target.closest('input, textarea, .task-color, .to-background, .edit'));
-
-  node.addEventListener('dragstart', (e) => {
-    if (e.target.closest('.to-background')) return;
-    dragTask = { fromDay: day, taskId: task.id };
-  });
-
-  node.addEventListener('dragover', (e) => e.preventDefault());
-  node.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const rect = node.getBoundingClientRect();
-    const placeAfter = e.clientY > rect.top + rect.height / 2;
-    handleDayDrop(task.id, placeAfter);
-  });
-
+// ---------------------------------------------------------------------------
+// BUILD TASK NODE
+// ---------------------------------------------------------------------------
+function buildNode(task,day,dropFn){
+  const tpl=document.getElementById('taskTemplate'),node=tpl.content.firstElementChild.cloneNode(true);
+  if(task.pinned)node.classList.add('pinned');
+  if(selTasks.has(selKey(day,task.id)))node.classList.add('selected');
+  node.querySelector('.open-board').textContent=task.title;
+  node.querySelector('.open-board').addEventListener('click',e=>{if(!e.ctrlKey)openBoard(task.id);});
+  inlineEdit(node,task,day);
+  if(task.color)node.style.setProperty('--task-color',task.color);
+  node.addEventListener('mousedown',e=>{if(e.button!==0||!e.ctrlKey||e.target.closest('input,textarea'))return;e.preventDefault();const k=selKey(day,task.id);if(selTasks.has(k))selTasks.delete(k);else selTasks.add(k);renderCal();});
+  node.addEventListener('contextmenu',e=>{e.preventDefault();const k=selKey(day,task.id);if(!selTasks.has(k))selTasks=new Set([k]);openCtx(e.clientX,e.clientY,day,task);});
+  touchCtx(node,(x,y)=>{const k=selKey(day,task.id);if(!selTasks.has(k))selTasks=new Set([k]);openCtx(x,y,day,task);},e=>!e.target.closest('input,textarea,.task-color,.to-background,.edit'));
+  node.addEventListener('dragstart',e=>{if(!e.target.closest('.to-background'))dragTask={fromDay:day,taskId:task.id};});
+  node.addEventListener('dragover',e=>e.preventDefault());
+  node.addEventListener('drop',e=>{e.preventDefault();const r=node.getBoundingClientRect();dropFn(task.id,e.clientY>r.top+r.height/2);});
   return node;
 }
 
-function renderCalendar() {
-  const s = effectiveState();
-  const grid = document.getElementById('calendarGrid');
-  const space = getActiveSpace(s);
-  const taskGroups = Array.isArray(space.taskGroups) ? space.taskGroups : [];
-  grid.innerHTML = '';
-
-  DAYS.forEach((day) => {
-    const cell = document.createElement('div');
-    cell.className = 'day-cell';
-    cell.dataset.day = day;
-    const col = document.createElement('div');
-    col.className = 'day-column';
-    col.dataset.day = day;
-    const dayBackgroundTitle = space.dayBackgrounds?.[day] || null;
-    col.innerHTML = `
-      <h3 class="day-header">${day}</h3>
-      <button class="clear-day-bg ${dayBackgroundTitle ? '' : 'hidden'}" type="button" title="Убрать фон дня">✕ фон</button>
-      <div class="day-background-label ${dayBackgroundTitle ? '' : 'hidden'}"></div>
-      <form class="add-task">
-        <input name="title" placeholder="Новая задача" required />
-        <button type="submit">+</button>
-      </form>
-      <div class="tasks-area">
-        <div class="task-groups"></div>
-        <ul class="tasks"></ul>
-      </div>
-    `;
-
-    const bgLabel = col.querySelector('.day-background-label');
-    if (bgLabel && dayBackgroundTitle) {
-      bgLabel.textContent = buildDayBackgroundPattern(dayBackgroundTitle);
-    }
-
-    const notes = document.createElement('textarea');
-    notes.className = 'day-notes';
-    notes.placeholder = 'Текстовое поле под блоком дня';
-    notes.value = space.dayNotes?.[day] || '';
-    notes.addEventListener('change', (e) => {
-      const nextValue = e.target.value;
-      commit(`Обновлён текст под задачами для дня «${day}»`, (st) => {
-        getActiveSpace(st).dayNotes[day] = nextValue;
-      });
-    });
-
-    const handleDayDrop = (targetTaskId = null, placeAfter = false) => {
-      if (dragBackgroundTask) {
-        const { fromDay, taskId, title } = dragBackgroundTask;
-        commit(`Задача «${title}» перенесена на фон дня «${day}»`, (st) => {
-          const active = getActiveSpace(st);
-          const source = active.days[fromDay];
-          const idx = source.findIndex((t) => t.id === taskId);
-          if (idx < 0) return;
-          const [task] = source.splice(idx, 1);
-          active.dayBackgrounds[day] = task.title;
-          delete active.boards[task.id];
-          if (currentBoardTaskId === task.id) currentBoardTaskId = null;
-        });
-        dragBackgroundTask = null;
-        return true;
-      }
-
-      if (dragCloudNote) {
-        const { boardTaskId, cloudId } = dragCloudNote;
-        commit(`Заметка преобразована в задачу дня «${day}»`, (st) => {
-          moveCloudToDay(st, boardTaskId, cloudId, day, targetTaskId, placeAfter);
-        });
-        dragCloudNote = null;
-        return true;
-      }
-
-      if (dragSideNote) {
-        const { noteId } = dragSideNote;
-        commit(`Заметка бокового меню перенесена в день «${day}»`, (st) => {
-          moveSideNoteToDay(st, noteId, day, targetTaskId, placeAfter);
-        });
-        dragSideNote = null;
-        return true;
-      }
-
-      if (!dragTask) return false;
-      const { fromDay, taskId } = dragTask;
-      if (targetTaskId === null) {
-        commit(`Задача перемещена в «${day}»`, (st) => moveTask(st, fromDay, day, taskId));
-      } else {
-        commit('Изменён порядок задач', (st) => {
-          moveTask(st, fromDay, day, taskId, targetTaskId, placeAfter);
-        });
-      }
-      dragTask = null;
-      return true;
+// ---------------------------------------------------------------------------
+// RENDER CALENDAR
+// ---------------------------------------------------------------------------
+function renderCal(){
+  const s=eff(),grid=document.getElementById('calendarGrid'),sp=getSpace(s);
+  const tgs=Array.isArray(sp.taskGroups)?sp.taskGroups:[];grid.innerHTML='';
+  DAYS.forEach(day=>{
+    const cell=document.createElement('div');cell.className='day-cell';cell.dataset.day=day;
+    const col=document.createElement('div');col.className='day-column';col.dataset.day=day;
+    const bg=sp.dayBackgrounds?.[day]||null;
+    col.innerHTML='<h3 class="day-header">'+day+'</h3><button class="clear-day-bg '+(bg?'':'hidden')+'" type="button" title="Убрать фон">✕ фон</button><div class="day-background-label '+(bg?'':'hidden')+'"></div><form class="add-task"><input name="title" placeholder="Новая задача" required /><button type="submit">+</button></form><div class="tasks-area"><div class="task-groups"></div><ul class="tasks"></ul></div>';
+    const bgl=col.querySelector('.day-background-label');if(bgl&&bg)bgl.textContent=bgPat(bg);
+    const na=document.createElement('textarea');na.className='day-notes';na.placeholder='Текст под днём';na.value=sp.dayNotes?.[day]||'';
+    na.addEventListener('change',e=>{const v=e.target.value,sid=state.activeSpaceId;commit('Текст «'+day+'»',st=>{getSpace(st).dayNotes[day]=v;},()=>upsDay(sid,day,getSpace(state).dayBackgrounds[day],v));});
+    const dropFn=(targetId=null,after=false)=>{
+      const sid=state.activeSpaceId;
+      if(dragBgTask){const{fromDay,taskId,title}=dragBgTask;commit('Фон «'+day+'»',st=>{const a=getSpace(st),src=a.days[fromDay],fi=src.findIndex(t=>t.id===taskId);if(fi<0)return;const[task]=src.splice(fi,1);a.dayBackgrounds[day]=task.title;delete a.boards[task.id];if(curBoard===task.id)curBoard=null;},async()=>{await cdCal(taskId);await upsDay(sid,day,title,getSpace(state).dayNotes[day]);});dragBgTask=null;return true;}
+      if(dragCloudNote){const{boardTaskId,cloudId}=dragCloudNote;let nt;commit('Заметка→день «'+day+'»',st=>{moveCloud2Day(st,boardTaskId,cloudId,day,targetId,after);nt=getSpace(st).days[day].at(-1);},()=>nt&&ciCal(sid,day,nt,getSpace(state).days[day].length-1));dragCloudNote=null;return true;}
+      if(dragNote){const{noteId}=dragNote;let nt2;commit('Заметка→день «'+day+'»',st=>{moveNote2Day(st,noteId,day,targetId,after);nt2=getSpace(st).days[day].at(-1);},()=>nt2&&ciCal(sid,day,nt2,getSpace(state).days[day].length-1));dragNote=null;return true;}
+      if(!dragTask)return false;
+      const{fromDay,taskId}=dragTask;
+      const task=getSpace(state).days[fromDay]?.find(t=>t.id===taskId),db=task?._db||taskId;
+      commit(targetId===null?'Задача→«'+day+'»':'Порядок',st=>{moveTask(st,fromDay,day,taskId,targetId,after);},()=>cuCal(db,{day,position:getSpace(state).days[day].findIndex(t=>(t._db||t.id)===db)}));
+      dragTask=null;return true;
     };
-
-    const form = col.querySelector('form');
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const input = form.title;
-      const title = input.value.trim();
-      if (!title) return;
-      commit(`Добавлена задача «${title}»`, (st) => {
-        getActiveSpace(st).days[day].push({ id: st.nextTaskId++, title, color: null, pinned: false, createdAt: Date.now(), taskGroupId: null });
-      });
+    col.querySelector('form').addEventListener('submit',e=>{e.preventDefault();const inp=e.target.title,title=inp.value.trim();if(!title)return;const sid=state.activeSpaceId,nt={id:Date.now(),title,color:null,pinned:false,createdAt:Date.now(),taskGroupId:null};commit('Добавлена «'+title+'»',st=>{getSpace(st).days[day].push(nt);},()=>ciCal(sid,day,nt,getSpace(state).days[day].length-1));inp.value='';});
+    col.querySelector('.clear-day-bg').addEventListener('click',()=>{const sid=state.activeSpaceId;commit('Очистка фона «'+day+'»',st=>{getSpace(st).dayBackgrounds[day]=null;},()=>upsDay(sid,day,null,getSpace(state).dayNotes[day]));});
+    const list=col.querySelector('.tasks'),gw=col.querySelector('.task-groups');
+    col.addEventListener('dragover',e=>{if(dragTask||dragCloudNote||dragBgTask||dragNote)e.preventDefault();});
+    col.addEventListener('drop',e=>{e.preventDefault();dropFn();});
+    list.addEventListener('dragover',e=>e.preventDefault());list.addEventListener('drop',e=>{e.preventDefault();dropFn();});
+    const dts=sp.days[day],gids=new Set(tgs.flatMap(g=>g.taskIds||[]));
+    tgs.filter(g=>(g.taskIds||[]).some(id=>dts.some(t=>t.id===id))).forEach(group=>{
+      const gts=dts.filter(t=>(group.taskIds||[]).includes(t.id));if(!gts.length)return;
+      const gel=document.createElement('section');gel.className='task-group-column';const gc=group.color||'#8ea1ff';gel.style.setProperty('--group-color',gc);
+      gel.innerHTML='<div class="task-group-header"><h4>'+(group.name||'Группа')+'</h4><div class="task-group-controls"><input class="group-color-input" type="color" value="'+gc+'" /><button class="group-rename" type="button">✎</button></div></div><ul class="tasks"></ul>';
+      gel.querySelector('.tasks').append(...gts.map(t=>buildNode(t,day,dropFn)));
+      gel.querySelector('.group-color-input').addEventListener('change',e=>{const c=e.target.value,db=group._db||group.id;commit('Цвет группы',st=>{const g2=getSpace(st).taskGroups?.find(x=>x.id===group.id);if(g2)g2.color=c;},()=>sbq(sb=>sb.from('task_groups').update({color:c}).eq('id',db)));});
+      gel.querySelector('.group-rename').addEventListener('click',()=>{const n=prompt('Название',group.name||'');if(!n?.trim())return;const c=n.trim(),db=group._db||group.id;commit('Название группы',st=>{const g2=getSpace(st).taskGroups?.find(x=>x.id===group.id);if(g2)g2.name=c;},()=>sbq(sb=>sb.from('task_groups').update({name:c}).eq('id',db)));});
+      gw.append(gel);
     });
-
-    const clearBg = col.querySelector('.clear-day-bg');
-    clearBg.addEventListener('click', () => {
-      commit(`Очищен фон дня «${day}»`, (st) => {
-        getActiveSpace(st).dayBackgrounds[day] = null;
-      });
-    });
-
-    const list = col.querySelector('.tasks');
-    const groupsWrap = col.querySelector('.task-groups');
-    col.addEventListener('dragover', (e) => {
-      if (dragTask || dragCloudNote || dragBackgroundTask || dragSideNote) e.preventDefault();
-    });
-    col.addEventListener('drop', (e) => {
-      e.preventDefault();
-      handleDayDrop();
-    });
-
-    list.addEventListener('dragover', (e) => e.preventDefault());
-    list.addEventListener('drop', (e) => {
-      e.preventDefault();
-      handleDayDrop();
-    });
-
-    const dayTasks = space.days[day];
-    const groupedTaskIds = new Set(taskGroups.flatMap((group) => group.taskIds || []));
-    const groupsForDay = taskGroups.filter((group) => (group.taskIds || []).some((id) => dayTasks.some((task) => task.id === id)));
-
-    groupsForDay.forEach((group) => {
-      const groupTasks = dayTasks.filter((task) => (group.taskIds || []).includes(task.id));
-      if (groupTasks.length === 0) return;
-      const groupEl = document.createElement('section');
-      groupEl.className = 'task-group-column';
-      const groupColor = group.color || '#8ea1ff';
-      groupEl.style.setProperty('--group-color', groupColor);
-      groupEl.innerHTML = `
-        <div class="task-group-header">
-          <h4>${group.name || 'Группа'}</h4>
-          <div class="task-group-controls">
-            <input class="group-color-input" type="color" value="${groupColor}" title="Цвет группы" />
-            <button class="group-rename" type="button" title="Изменить название группы">✎</button>
-          </div>
-        </div>
-        <ul class="tasks"></ul>
-      `;
-      const groupList = groupEl.querySelector('.tasks');
-      groupTasks.forEach((task) => groupList.append(buildTaskNode(task, day, handleDayDrop)));
-
-      const colorInput = groupEl.querySelector('.group-color-input');
-      colorInput.addEventListener('change', (e) => {
-        const nextColor = e.target.value;
-        commit('Изменён цвет группы задач', (st) => {
-          const active = getActiveSpace(st);
-          const targetGroup = (active.taskGroups || []).find((item) => item.id === group.id);
-          if (targetGroup) targetGroup.color = nextColor;
-        });
-      });
-
-      const renameBtn = groupEl.querySelector('.group-rename');
-      renameBtn.addEventListener('click', () => {
-        const nextName = prompt('Название группы', group.name || '');
-        if (nextName === null) return;
-        const cleanName = nextName.trim();
-        if (!cleanName) return;
-        commit('Изменено название группы задач', (st) => {
-          const active = getActiveSpace(st);
-          const targetGroup = (active.taskGroups || []).find((item) => item.id === group.id);
-          if (targetGroup) targetGroup.name = cleanName;
-        });
-      });
-
-      groupsWrap.append(groupEl);
-    });
-
-    dayTasks
-      .filter((task) => !groupedTaskIds.has(task.id))
-      .forEach((task) => {
-        list.append(buildTaskNode(task, day, handleDayDrop));
-      });
-
-    cell.append(col, notes);
-    grid.append(cell);
+    dts.filter(t=>!gids.has(t.id)).forEach(t=>list.append(buildNode(t,day,dropFn)));
+    cell.append(col,na);grid.append(cell);
   });
-
-  renderSpaceOptions(s);
-  updateSpaceButton(s.activeSpaceId, s);
-  applyTheme(s.theme);
+  renderSpOpts(s);updSpBtn(s.activeSpaceId,s);applyTheme(s.theme);
 }
 
-function renderTaskDock(s) {
-  const space = getActiveSpace(s);
-  const list = document.getElementById('taskDockList');
-  const toggle = document.getElementById('toggleDockMenu');
-  if (!list || !toggle) return;
-  list.innerHTML = '';
-  toggle.textContent = `Задачи поля доски (${space.dockTasks.length})`;
-
-  if (space.dockTasks.length === 0) {
-    const empty = document.createElement('li');
-    empty.className = 'task-dock-empty';
-    empty.textContent = 'Пока нет задач. Добавьте задачу и откройте меню.';
-    list.append(empty);
-    return;
-  }
-
-  space.dockTasks.forEach((task) => {
-    const tpl = document.getElementById('taskTemplate');
-    const node = tpl.content.firstElementChild.cloneNode(true);
-    if (task.pinned) node.classList.add('pinned');
-    node.querySelector('.open-board').textContent = task.title;
-    node.querySelector('.open-board').addEventListener('click', () => openBoard(task.id));
-
-    const tagWrap = node.querySelector('.task-tags');
-    const tags = task.tags || [];
-    tagWrap.innerHTML = tags.map((tag) => `<span class="tag">#${tag}</span>`).join('');
-
-    node.querySelector('.edit').addEventListener('click', () => {
-      const newTitle = prompt('Название задачи', task.title);
-      if (newTitle === null) return;
-      const cleanTitle = newTitle.trim();
-      if (!cleanTitle) return;
-      const tagInput = prompt('Теги через запятую', (task.tags || []).join(', '));
-      if (tagInput === null) return;
-      const nextTags = [...new Set(tagInput.split(',').map((x) => x.trim()).filter(Boolean))];
-      commit(`Задача «${task.title}» изменена`, (st) => {
-        const t = getActiveSpace(st).dockTasks.find((x) => x.id === task.id);
-        if (!t) return;
-        t.title = cleanTitle;
-        t.tags = nextTags;
-      });
-    });
-
-    node.querySelector('.delete').addEventListener('click', () => {
-      commit(`Удалена задача «${task.title}»`, (st) => {
-        const active = getActiveSpace(st);
-        active.dockTasks = active.dockTasks.filter((t) => t.id !== task.id);
-        delete active.boards[task.id];
-      });
-    });
-
-    node.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      commit('Изменён статус закрепления', (st) => {
-        const t = getActiveSpace(st).dockTasks.find((x) => x.id === task.id);
-        if (t) t.pinned = !t.pinned;
-      });
-    });
-
-    attachTouchContextAction(node, () => {
-      commit('Изменён статус закрепления', (st) => {
-        const t = getActiveSpace(st).dockTasks.find((x) => x.id === task.id);
-        if (t) t.pinned = !t.pinned;
-      });
-    }, (e) => !e.target.closest('textarea, input, button.edit, button.delete'));
-
-    node.addEventListener('dragstart', () => {
-      dragTask = { fromDay: null, taskId: task.id, fromDock: true };
-    });
-
-    node.addEventListener('dragover', (e) => e.preventDefault());
-    node.addEventListener('drop', (e) => {
-      e.preventDefault();
-      if (!dragTask || !dragTask.fromDock) return;
-      const rect = node.getBoundingClientRect();
-      const placeAfter = e.clientY > rect.top + rect.height / 2;
-      const { taskId } = dragTask;
-      commit('Изменён порядок задач в поле доски', (st) => {
-        moveDockTask(st, taskId, task.id, placeAfter);
-      });
-      dragTask = null;
-    });
-
+// ---------------------------------------------------------------------------
+// RENDER DOCK
+// ---------------------------------------------------------------------------
+function renderDock(s){
+  const sp=getSpace(s),list=document.getElementById('taskDockList'),tog=document.getElementById('toggleDockMenu');
+  if(!list||!tog)return;list.innerHTML='';tog.textContent='Док (' +sp.dockTasks.length+')';
+  if(!sp.dockTasks.length){const e=document.createElement('li');e.className='task-dock-empty';e.textContent='Пусто.';list.append(e);return;}
+  sp.dockTasks.forEach(task=>{
+    const tpl=document.getElementById('taskTemplate'),node=tpl.content.firstElementChild.cloneNode(true);
+    if(task.pinned)node.classList.add('pinned');node.querySelector('.open-board').textContent=task.title;node.querySelector('.open-board').addEventListener('click',()=>openBoard(task.id));
+    const tw=node.querySelector('.task-tags');if(tw)tw.innerHTML=(task.tags||[]).map(t=>'<span class="tag">#'+t+'</span>').join('');
+    node.querySelector('.edit').addEventListener('click',()=>{const n=prompt('Название',task.title);if(!n?.trim())return;const ti2=prompt('Теги',( task.tags||[]).join(', '));if(ti2===null)return;const tags=[...new Set(ti2.split(',').map(x=>x.trim()).filter(Boolean))];const db=task._db||task.id;commit('Dock изм',st=>{const t=getSpace(st).dockTasks.find(x=>x.id===task.id);if(t){t.title=n.trim();t.tags=tags;}},()=>cuDock(db,{title:n.trim(),tags}));});
+    node.querySelector('.delete').addEventListener('click',()=>{const db=task._db||task.id;commit('Удалить dock',st=>{const a=getSpace(st);a.dockTasks=a.dockTasks.filter(t=>t.id!==task.id);delete a.boards[task.id];},()=>cdDock(db));});
+    const pin=()=>{const db=task._db||task.id;commit('Закреп',st=>{const t=getSpace(st).dockTasks.find(x=>x.id===task.id);if(t)t.pinned=!t.pinned;},()=>cuDock(db,{pinned:!task.pinned}));};
+    node.addEventListener('contextmenu',e=>{e.preventDefault();pin();});
+    touchCtx(node,()=>pin(),e=>!e.target.closest('textarea,input,button.edit,button.delete'));
+    node.addEventListener('dragstart',()=>{dragTask={fromDay:null,taskId:task.id,fromDock:true};});
+    node.addEventListener('dragover',e=>e.preventDefault());
+    node.addEventListener('drop',e=>{e.preventDefault();if(!dragTask?.fromDock)return;const r=node.getBoundingClientRect();const{taskId}=dragTask;commit('Порядок dock',st=>moveDock(st,taskId,task.id,e.clientY>r.top+r.height/2));dragTask=null;});
     list.append(node);
   });
 }
 
-function renderHistory() {
-  const list = document.getElementById('historyList');
-  list.innerHTML = '';
-
-  history.forEach((entry, i) => {
-    const li = document.createElement('li');
-    if (i === currentHistoryIndex && previewIndex === null) li.classList.add('active');
-    if (i === previewIndex) li.classList.add('active');
-    li.innerHTML = `<strong>${entry.description}</strong><br/><small>${new Date(entry.ts).toLocaleString('ru-RU')}</small>`;
-
-    const actions = document.createElement('div');
-    const previewBtn = document.createElement('button');
-    previewBtn.textContent = 'Просмотр';
-    previewBtn.type = 'button';
-    previewBtn.onclick = () => {
-      previewIndex = i;
-      renderAll();
-    };
-
-    const rollbackBtn = document.createElement('button');
-    rollbackBtn.textContent = 'Откат';
-    rollbackBtn.type = 'button';
-    rollbackBtn.onclick = () => {
-      state = structuredClone(history[i].snapshot);
-      history = history.slice(0, i + 1);
-      currentHistoryIndex = i;
-      previewIndex = null;
-      persist();
-      renderAll();
-    };
-
-    actions.append(previewBtn, rollbackBtn);
-    li.append(actions);
-    list.append(li);
+// ---------------------------------------------------------------------------
+// RENDER HISTORY
+// ---------------------------------------------------------------------------
+function renderHist(){
+  const list=document.getElementById('historyList');list.innerHTML='';
+  hist.forEach((e,i)=>{
+    const li=document.createElement('li');if((i===hIdx&&prevIdx===null)||i===prevIdx)li.classList.add('active');
+    li.innerHTML='<strong>'+e.desc+'</strong><br/><small>'+new Date(e.ts).toLocaleString('ru-RU')+'</small>';
+    const acts=document.createElement('div');
+    const pb=document.createElement('button');pb.textContent='Просмотр';pb.type='button';pb.onclick=()=>{prevIdx=i;renderAll();};
+    const rb=document.createElement('button');rb.textContent='Откат';rb.type='button';rb.onclick=()=>{state=structuredClone(hist[i].snap);hist=hist.slice(0,i+1);hIdx=i;prevIdx=null;persist();renderAll();};
+    acts.append(pb,rb);li.append(acts);list.append(li);
   });
-
-  const banner = document.getElementById('previewBanner');
-  const exit = document.getElementById('exitPreview');
-  if (previewIndex !== null) {
-    banner.classList.remove('hidden');
-    banner.textContent = `Режим просмотра: ${history[previewIndex].description}`;
-    exit.classList.remove('hidden');
-  } else {
-    banner.classList.add('hidden');
-    exit.classList.add('hidden');
-  }
+  const banner=document.getElementById('previewBanner'),exit=document.getElementById('exitPreview');
+  if(prevIdx!==null){banner.classList.remove('hidden');banner.textContent='Просмотр: '+hist[prevIdx].desc;exit.classList.remove('hidden');}
+  else{banner.classList.add('hidden');exit.classList.add('hidden');}
 }
 
-function openBoard(taskId) {
-  currentBoardTaskId = taskId;
-  selectedCloudIds = new Set();
-  renderBoard();
-}
-
-function renderBoard() {
-  const boardTitle = document.getElementById('boardTitle');
-  const canvas = document.getElementById('boardCanvas');
-  const zoomValue = document.getElementById('zoomValue');
-  if (!boardTitle || !canvas || !zoomValue) return;
-
-  const taskInfo = currentBoardTaskId ? getTaskById(currentBoardTaskId, effectiveState()) : null;
-  if (!taskInfo) {
-    currentBoardTaskId = null;
-    canvas.innerHTML = '<div class="board-placeholder">Выберите задачу в календаре, чтобы открыть её доску.</div>';
-    canvas.style.transform = 'scale(1)';
-    zoomValue.textContent = '100%';
-    boardTitle.textContent = 'Поле доски';
-    return;
-  }
-
-  boardTitle.textContent = `Доска: ${taskInfo.task.title}`;
-
-  const activeTaskId = taskInfo.task.id;
-  const board = ensureBoard(state, activeTaskId);
-  canvas.innerHTML = '';
-  canvas.style.transform = `scale(${board.zoom})`;
-  zoomValue.textContent = `${Math.round(board.zoom * 100)}%`;
-
-  board.clouds.forEach((cloud) => {
-    const el = document.createElement('div');
-    el.className = 'cloud';
-    if (cloud.groupId) el.classList.add('grouped');
-    if (selectedCloudIds.has(cloud.id)) el.classList.add('selected');
-    el.dataset.id = cloud.id;
-    el.style.left = `${cloud.x}px`;
-    el.style.top = `${cloud.y}px`;
-    el.innerHTML = `
-      <div class="cloud-header">
-        <button class="cloud-transfer" type="button" draggable="true" title="Перетащите в календарный день">⇢ В день</button>
-      </div>
-      <textarea>${cloud.text || ''}</textarea>
-    `;
-
-    el.querySelector('textarea').addEventListener('change', (e) => {
-      commit('Изменён текст заметки', (st) => {
-        const b = ensureBoard(st, activeTaskId);
-        const c = b.clouds.find((x) => x.id === cloud.id);
-        if (c) c.text = e.target.value;
-      });
-    });
-
-    const transfer = el.querySelector('.cloud-transfer');
-    transfer.addEventListener('dragstart', (e) => {
-      dragCloudNote = { boardTaskId: activeTaskId, cloudId: cloud.id };
-      if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', cloud.text || '');
-      }
-    });
-
-    transfer.addEventListener('dragend', () => {
-      dragCloudNote = null;
-    });
-
-    el.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      if (e.ctrlKey && !e.target.matches('textarea')) {
-        if (selectedCloudIds.has(cloud.id)) {
-          selectedCloudIds.delete(cloud.id);
-        } else {
-          selectedCloudIds.add(cloud.id);
-        }
-        renderBoard();
-        return;
-      }
-
-      if (e.target.matches('textarea, .cloud-transfer')) return;
-      dragCloud = { id: cloud.id, startX: e.clientX, startY: e.clientY };
-    });
-
-    canvas.append(el);
+// ---------------------------------------------------------------------------
+// BOARD
+// ---------------------------------------------------------------------------
+function openBoard(id){curBoard=id;selClouds=new Set();renderBoard();}
+function renderBoard(){
+  const bt=document.getElementById('boardTitle'),cv=document.getElementById('boardCanvas'),zv=document.getElementById('zoomValue');
+  if(!bt||!cv||!zv)return;
+  const ti=curBoard?taskById(curBoard,eff()):null;
+  if(!ti){curBoard=null;cv.innerHTML='<div class="board-placeholder">Выберите задачу.</div>';cv.style.transform='scale(1)';zv.textContent='100%';bt.textContent='Поле доски';return;}
+  bt.textContent='Доска: '+ti.task.title;
+  const aid=ti.task.id,isCal=ti.day!==null,board=ensureBoard(state,aid);
+  cv.innerHTML='';cv.style.transform='scale('+board.zoom+')';zv.textContent=Math.round(board.zoom*100)+'%';
+  board.clouds.forEach(cloud=>{
+    const el=document.createElement('div');el.className='cloud';if(cloud.groupId)el.classList.add('grouped');if(selClouds.has(cloud.id))el.classList.add('selected');
+    el.dataset.id=cloud.id;el.style.left=cloud.x+'px';el.style.top=cloud.y+'px';
+    el.innerHTML='<div class="cloud-header"><button class="cloud-transfer" type="button" draggable="true" title="В день">⇢ В день</button></div><textarea>'+(cloud.text||'')+'</textarea>';
+    el.querySelector('textarea').addEventListener('change',e=>{const t=e.target.value,db=cloud._db||cloud.id;commit('Текст заметки',st=>{const b=ensureBoard(st,aid),c=b.clouds.find(x=>x.id===cloud.id);if(c)c.text=t;},()=>isCal?cuBN(db,{text:t}):sbq(sb=>sb.from('dock_board_notes').update({text:t,updated_at:new Date().toISOString()}).eq('id',db)));});
+    const tr=el.querySelector('.cloud-transfer');
+    tr.addEventListener('dragstart',e2=>{dragCloudNote={boardTaskId:aid,cloudId:cloud.id};if(e2.dataTransfer){e2.dataTransfer.effectAllowed='move';e2.dataTransfer.setData('text/plain',cloud.text||'');}});
+    tr.addEventListener('dragend',()=>{dragCloudNote=null;});
+    el.addEventListener('mousedown',e2=>{if(e2.button!==0)return;if(e2.ctrlKey&&!e2.target.matches('textarea')){if(selClouds.has(cloud.id))selClouds.delete(cloud.id);else selClouds.add(cloud.id);renderBoard();return;}if(e2.target.matches('textarea,.cloud-transfer'))return;dragCloud={id:cloud.id,startX:e2.clientX,startY:e2.clientY};});
+    cv.append(el);
   });
 }
+document.addEventListener('mousemove',e=>{if(!dragCloud||!curBoard)return;const board=ensureBoard(state,curBoard),c=board.clouds.find(x=>x.id===dragCloud.id);if(!c)return;const dx=(e.clientX-dragCloud.startX)/board.zoom,dy=(e.clientY-dragCloud.startY)/board.zoom;dragCloud.startX=e.clientX;dragCloud.startY=e.clientY;const targets=c.groupId?board.clouds.filter(x=>x.groupId===c.groupId):[c];targets.forEach(item=>{item.x+=dx;item.y+=dy;});renderBoard();});
+document.addEventListener('mouseup',()=>{if(dragCloud&&curBoard){const board=ensureBoard(state,curBoard),ti=taskById(curBoard,state),ic=ti?.day!==null;board.clouds.forEach(c=>{const db=c._db||c.id;if(ic)cuBN(db,{pos_x:c.x,pos_y:c.y});else sbq(sb=>sb.from('dock_board_notes').update({pos_x:c.x,pos_y:c.y}).eq('id',db));});hist.push({desc:'Перемещение',snap:structuredClone(state),ts:new Date().toISOString()});hIdx=hist.length-1;renderHist();}dragCloud=null;});
 
-document.addEventListener('mousemove', (e) => {
-  if (!dragCloud || !currentBoardTaskId) return;
-  const board = ensureBoard(state, currentBoardTaskId);
-  const c = board.clouds.find((x) => x.id === dragCloud.id);
-  if (!c) return;
+// ---------------------------------------------------------------------------
+// SIDE NOTES
+// ---------------------------------------------------------------------------
+function renderNotes(st=eff()){const list=document.getElementById('sideNotesList');if(!list)return;const ns=sideNotes(st);list.innerHTML='';if(!ns.length){const e=document.createElement('li');e.className='side-note-empty';e.textContent='Пусто.';list.append(e);return;}const sd=(note,e2)=>{dragNote={noteId:note.id};if(e2.dataTransfer){e2.dataTransfer.effectAllowed='move';e2.dataTransfer.setData('text/plain',note.text||'');}};ns.forEach(note=>{const li=document.createElement('li');li.className='side-note-item';li.draggable=true;li.innerHTML='<textarea>'+(note.text||'')+'</textarea><div class="side-note-actions"><button type="button" class="side-note-drag" draggable="true">В день</button><button type="button" class="side-note-delete">Удалить</button></div>';li.querySelector('textarea').addEventListener('change',e2=>{const v=e2.target.value;commit('Текст заметки',st2=>{const t=sideNotes(st2).find(x=>x.id===note.id);if(t)t.text=v;});});li.addEventListener('dragstart',e2=>{if(e2.target.closest('textarea,.side-note-delete')){e2.preventDefault();return;}sd(note,e2);});li.addEventListener('dragend',()=>{dragNote=null;});li.querySelector('.side-note-drag').addEventListener('dragstart',e2=>sd(note,e2));li.querySelector('.side-note-drag').addEventListener('dragend',()=>{dragNote=null;});li.querySelector('.side-note-delete').addEventListener('click',()=>{commit('Удалить заметку',st2=>{st2.sideNotes=sideNotes(st2).filter(x=>x.id!==note.id);});});list.append(li);});}
+function renderAll(){renderCal();renderHist();renderBoard();renderNotes();renderDock(eff());}
 
-  const dx = (e.clientX - dragCloud.startX) / board.zoom;
-  const dy = (e.clientY - dragCloud.startY) / board.zoom;
-  dragCloud.startX = e.clientX;
-  dragCloud.startY = e.clientY;
-
-  const groupId = c.groupId;
-  const targets = groupId ? board.clouds.filter((x) => x.groupId === groupId) : [c];
-  targets.forEach((item) => {
-    item.x += dx;
-    item.y += dy;
-  });
-
-  persist();
-  renderBoard();
-});
-
-document.addEventListener('mouseup', () => {
-  if (dragCloud) {
-    history.push({ description: 'Перемещение заметки/группы', snapshot: structuredClone(state), ts: new Date().toISOString() });
-    currentHistoryIndex = history.length - 1;
-    renderHistory();
-  }
-  dragCloud = null;
-});
-
-function renderSideNotes(st = effectiveState()) {
-  const list = document.getElementById('sideNotesList');
-  if (!list) return;
-  const sideNotes = getGlobalSideNotes(st);
-  list.innerHTML = '';
-
-  const startSideNoteDrag = (note, e) => {
-    dragSideNote = { noteId: note.id };
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', note.text || '');
-    }
-  };
-
-  if (sideNotes.length === 0) {
-    const empty = document.createElement('li');
-    empty.className = 'side-note-empty';
-    empty.textContent = 'Пока нет заметок. Добавьте заметку и перетащите её в день.';
-    list.append(empty);
-    return;
-  }
-
-  sideNotes.forEach((note) => {
-    const li = document.createElement('li');
-    li.className = 'side-note-item';
-    li.draggable = true;
-    li.innerHTML = `
-      <textarea>${note.text || ''}</textarea>
-      <div class="side-note-actions">
-        <button type="button" class="side-note-drag" draggable="true">Перенести в день</button>
-        <button type="button" class="side-note-delete">Удалить</button>
-      </div>
-    `;
-
-    const area = li.querySelector('textarea');
-    area.addEventListener('change', (e) => {
-      commit('Изменён текст заметки бокового меню', (stateDraft) => {
-        const target = getGlobalSideNotes(stateDraft).find((x) => x.id === note.id);
-        if (target) target.text = e.target.value;
-      });
-    });
-
-    li.addEventListener('dragstart', (e) => {
-      if (e.target.closest('textarea, .side-note-delete')) {
-        e.preventDefault();
-        return;
-      }
-      startSideNoteDrag(note, e);
-    });
-    li.addEventListener('dragend', () => {
-      dragSideNote = null;
-    });
-
-    const dragBtn = li.querySelector('.side-note-drag');
-    dragBtn.addEventListener('dragstart', (e) => {
-      startSideNoteDrag(note, e);
-    });
-    dragBtn.addEventListener('dragend', () => {
-      dragSideNote = null;
-    });
-
-    li.querySelector('.side-note-delete').addEventListener('click', () => {
-      commit('Удалена заметка бокового меню', (stateDraft) => {
-        stateDraft.sideNotes = getGlobalSideNotes(stateDraft).filter((x) => x.id !== note.id);
-      });
-    });
-
-    list.append(li);
-  });
+// ---------------------------------------------------------------------------
+// SPACE SWITCH
+// ---------------------------------------------------------------------------
+function switchSpace(next){
+  if(!(next in state.spaces))return;
+  const prev=state.activeSpaceId;
+  commit('Пространство: '+spaceLabel(next,state),st=>{st.activeSpaceId=next;});
+  void savePref(next);
+  setSpMenu(false);clrSpSel();setSpActMenu(false);clrSel();curBoard=null;
+  if(next!==prev){void loadSpace(next).then(()=>{subSpace(next);renderAll();});}
 }
 
-function renderAll() {
-  renderCalendar();
-  renderHistory();
-  renderBoard();
-  renderSideNotes();
-}
+// ---------------------------------------------------------------------------
+// EVENT WIRING
+// ---------------------------------------------------------------------------
+document.getElementById('spaceMenuToggle').addEventListener('click',()=>setSpMenu(!spaceMenuOpen));
+const addSpForm=document.getElementById('addSpaceForm');
+if(addSpForm){addSpForm.addEventListener('submit',async e=>{e.preventDefault();const name=addSpForm.spaceName.value.trim();if(!name)return;const key=await addSpace(crypto.randomUUID(),name);if(!key)return;commit('Пространство «'+name+'»',st=>{st.spaces[key]=mkSpace();if(!st.spaceNames)st.spaceNames={};st.spaceNames[key]=name;st.activeSpaceId=key;});avSpaces=syncSpaces([...avSpaces.filter(s=>s.key!==key),{key,name}],state);addSpForm.reset();setSpMenu(true);curBoard=null;subSpace(key);});}
+const spEl=document.getElementById('spaceMenu');
+if(spEl){spEl.addEventListener('click',e=>{const b=e.target.closest('.space-option');if(!b)return;const k=b.dataset.space;if(!(k in state.spaces))return;if(e.ctrlKey){if(selSpaces.has(k))selSpaces.delete(k);else selSpaces.add(k);renderSpOpts();return;}selSpaces=new Set([k]);switchSpace(k);});spEl.addEventListener('contextmenu',e=>{const b=e.target.closest('.space-option');if(!b)return;e.preventDefault();const k=b.dataset.space;if(!(k in state.spaces))return;if(!selSpaces.has(k))selSpaces=new Set([k]);spaceActKey=k;renderSpOpts();setSpActMenu(true,e.clientX,e.clientY);});touchCtx(spEl,(x,y,ev)=>{const b=ev.target.closest('.space-option');if(!b)return;const k=b.dataset.space;if(!(k in state.spaces))return;if(!selSpaces.has(k))selSpaces=new Set([k]);spaceActKey=k;renderSpOpts();setSpActMenu(true,x,y);},e=>Boolean(e.target.closest('.space-option')));}
+document.addEventListener('click',e=>{if(!e.target.closest('.space-menu-wrap')){setSpMenu(false);if(selSpaces.size>0){clrSpSel();renderSpOpts();}}if(notesOpen&&!e.target.closest('#notesPanel')&&!e.target.closest('#toggleNotesPanel'))setNotes(false);if(spaceActOpen&&!e.target.closest('#spaceActionMenu')&&!e.target.closest('.space-option'))setSpActMenu(false);if(taskCtxOpen&&!e.target.closest('#taskContextMenu')&&!e.target.closest('.task'))setTaskCtx(false);if(!e.target.closest('.task')&&!e.ctrlKey&&selTasks.size>0){clrSel();renderCal();}});
+document.getElementById('themeToggle').addEventListener('click',()=>{commit('Тема',st=>{st.theme=st.theme==='dark'?'light':'dark';});});
+document.getElementById('toggleNotesPanel').addEventListener('click',()=>{setNotes(!notesOpen);if(notesOpen)setHist(false);});
+document.getElementById('toggleHistory').addEventListener('click',()=>{setHist(!histOpen);if(histOpen)setInstr(false);});
+document.getElementById('toggleInstructions').addEventListener('click',()=>{setInstr(!instrOpen);if(instrOpen)setHist(false);});
+const lBtn=document.getElementById('logout-btn');if(lBtn)lBtn.addEventListener('click',doLogout);
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(histOpen)setHist(false);if(instrOpen)setInstr(false);if(spaceMenuOpen)setSpMenu(false);if(spaceActOpen)setSpActMenu(false);if(selSpaces.size>0){clrSpSel();renderSpOpts();}if(taskCtxOpen)setTaskCtx(false);if(notesOpen)setNotes(false);}});
+document.getElementById('clearUnpinned').addEventListener('click',()=>{const tc=[],td=[];commit('Очистка',st=>{const a=getSpace(st);DAYS.forEach(d=>{a.days[d].filter(t=>!t.pinned).forEach(t=>tc.push(t._db||t.id));a.days[d]=a.days[d].filter(t=>t.pinned);});a.dockTasks.filter(t=>!t.pinned).forEach(t=>td.push(t._db||t.id));a.dockTasks=a.dockTasks.filter(t=>t.pinned);},()=>Promise.all([...tc.map(id=>cdCal(id)),...td.map(id=>cdDock(id))]));});
+document.getElementById('exitPreview').addEventListener('click',()=>{prevIdx=null;renderAll();});
+const tdBtn=document.getElementById('toggleDockMenu');if(tdBtn)tdBtn.addEventListener('click',()=>setDock(!dockOpen));
+const dockForm=document.getElementById('dockTaskForm');
+if(dockForm){dockForm.addEventListener('submit',e=>{e.preventDefault();const inp=dockForm.title,title=inp.value.trim();if(!title)return;const sid=state.activeSpaceId,nt={id:Date.now(),title,tags:[],pinned:false,createdAt:Date.now()};commit('Dock: «'+title+'»',st=>{getSpace(st).dockTasks.push(nt);},()=>ciDock(sid,nt,getSpace(state).dockTasks.length-1));dockForm.reset();});const dl=document.getElementById('taskDockList');if(dl){dl.addEventListener('dragover',e=>e.preventDefault());dl.addEventListener('drop',()=>{if(!dragTask)return;if(dragTask.fromDock){commit('Порядок dock',st=>moveDock(st,dragTask.taskId));}else{const{fromDay,taskId}=dragTask,sid=state.activeSpaceId;const task=getSpace(state).days[fromDay]?.find(t=>t.id===taskId),db=task?._db||taskId;commit('Задача→dock',st=>{const a=getSpace(st),src=a.days[fromDay],fi=src.findIndex(t=>t.id===taskId);if(fi<0)return;const[t]=src.splice(fi,1);a.dockTasks.push(t);},async()=>{await cdCal(db);const m=getSpace(state).dockTasks.at(-1);if(m)await ciDock(sid,m,getSpace(state).dockTasks.length-1);});}dragTask=null;});}}
+const snForm=document.getElementById('addSideNoteForm');if(snForm){snForm.addEventListener('submit',e=>{e.preventDefault();const text=snForm.text.value.trim();if(!text)return;commit('Боковая заметка',st=>{sideNotes(st).push({id:st.nextSideNoteId++,text,createdAt:Date.now()});});snForm.reset();});}
+document.getElementById('backToCalendar').addEventListener('click',()=>{curBoard=null;selClouds=new Set();renderBoard();});
 
-document.getElementById('spaceMenuToggle').addEventListener('click', () => {
-  setSpaceMenuOpen(!isSpaceMenuOpen);
+// Space actions
+function normImpData(raw){const src=(raw?.data&&typeof raw.data==='object')?raw.data:raw;const b=mkSpace();if(!src||typeof src!=='object')return b;return{days:{...b.days,...(src.days||{})},dayBackgrounds:{...b.dayBackgrounds,...(src.dayBackgrounds||{})},dayNotes:{...b.dayNotes,...(src.dayNotes||{})},boards:{...b.boards,...(src.boards||{})},dockTasks:Array.isArray(src.dockTasks)?src.dockTasks:[],taskGroups:Array.isArray(src.taskGroups)?src.taskGroups:[],sideNotes:Array.isArray(src.sideNotes)?src.sideNotes:[]};}
+function extractSpaces(pl){if(!pl||typeof pl!=='object')return[];const norm=(e,fb=null)=>{if(!e||typeof e!=='object')return null;const k=[e.id,e.spaceId,e.spaceKey,e.data?.id,fb].find(v=>typeof v==='string'&&v.trim())?.trim();if(!k)return null;return{key:k,name:typeof e.name==='string'&&e.name.trim()?e.name.trim():k,data:normImpData(e)};};if(Array.isArray(pl.spaces))return pl.spaces.map(e=>norm(e)).filter(Boolean);if(pl.spaces&&typeof pl.spaces==='object')return Object.entries(pl.spaces).map(([id,e])=>norm(e,id)).filter(Boolean);const s=norm(pl);return s?[s]:[];}
+function dlJson(fn,pl){const blob=new Blob([JSON.stringify(pl,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=fn;document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);}
+const sac=document.getElementById('spaceActionCopy'),sae=document.getElementById('spaceActionExport'),sad=document.getElementById('spaceActionDelete'),isb=document.getElementById('importSpaceBtn'),isi=document.getElementById('importSpaceInput');
+if(sac){sac.addEventListener('click',async()=>{if(!spaceActKey)return;const txt=JSON.stringify({name:spaceLabel(spaceActKey,state),spaceKey:spaceActKey,data:normImpData(getSpace({...state,activeSpaceId:spaceActKey}))},null,2);try{await navigator.clipboard.writeText(txt);alert('Скопировано.');}catch{alert('Ошибка.');}setSpActMenu(false);});}
+if(sae){sae.addEventListener('click',()=>{if(!spaceActKey)return;dlJson('space-'+spaceActKey+'.json',{name:spaceLabel(spaceActKey,state),spaceKey:spaceActKey,exportedAt:new Date().toISOString(),data:normImpData(getSpace({...state,activeSpaceId:spaceActKey}))});setSpActMenu(false);});}
+if(sad){sad.addEventListener('click',async()=>{const tgts=spActSel();if(!tgts.length){setSpActMenu(false);return;}if(!await delSpaces(tgts)){alert('Ошибка удаления.');return;}commit('Удалить пространство',st=>{if(!st.spaceNames)st.spaceNames={};tgts.forEach(t=>{delete st.spaces[t];delete st.spaceNames[t];});if(!(st.activeSpaceId in st.spaces))st.activeSpaceId=Object.keys(st.spaces)[0]||null;curBoard=null;});avSpaces=syncSpaces(avSpaces.filter(s=>!tgts.includes(s.key)),state);clrSpSel();setSpActMenu(false);});}
+if(isb&&isi){isb.addEventListener('click',()=>isi.click());isi.addEventListener('change',async()=>{const file=isi.files?.[0];if(!file)return;let pl;try{pl=JSON.parse(await file.text());}catch{alert('Некорректный JSON.');isi.value='';return;}const imp=extractSpaces(pl);if(!imp.length){alert('Нет пространств.');isi.value='';return;}const rm=imp.map(s=>({...s,key:toUUID(s.key)}));if(rm.find(({key})=>key in state.spaces)){alert('Уже есть.');isi.value='';return;}for(const s of rm){const k=await addSpace(s.key,s.name);if(!k){isi.value='';return;}s.key=k;}commit('Импорт: '+rm.length,st=>{if(!st.spaceNames)st.spaceNames={};rm.forEach(({key,name,data})=>{st.spaceNames[key]=name;st.spaces[key]=data;});});avSpaces=syncSpaces([...avSpaces.filter(s=>!rm.some(r=>r.key===s.key)),...rm.map(({key,name})=>({key,name}))],state);isi.value='';});}
+
+// Context menu handlers
+const ctxPin=document.getElementById('ctxPin'),ctxBg=document.getElementById('ctxBackground'),ctxDel=document.getElementById('ctxDelete'),ctxCol=document.getElementById('ctxColor'),ctxGrp=document.getElementById('ctxCreateGroup');
+if(ctxPin){ctxPin.addEventListener('click',()=>{const p=ctxSel();if(!p.length)return;commit('Закрепление',st=>{const a=getSpace(st);p.forEach(({day,taskId})=>{const t=a.days[day]?.find(x=>x.id===taskId);if(t)t.pinned=!t.pinned;});},()=>Promise.all(p.map(({day,taskId})=>{const t=getSpace(state).days[day]?.find(x=>x.id===taskId);if(t)return cuCal(t._db||t.id,{pinned:t.pinned});})));clrSel();setTaskCtx(false);});}
+if(ctxBg){ctxBg.addEventListener('click',()=>{if(!taskCtx)return;const{day,taskId}=taskCtx,task=getSpace(state).days[day]?.find(x=>x.id===taskId),db=task?._db||taskId,sid=state.activeSpaceId;commit('Фон дня',st=>{const a=getSpace(st),src=a.days[day],fi=src.findIndex(t=>t.id===taskId);if(fi<0)return;const[t]=src.splice(fi,1);a.dayBackgrounds[day]=t.title;delete a.boards[t.id];if(curBoard===t.id)curBoard=null;},async()=>{await cdCal(db);await upsDay(sid,day,task?.title,getSpace(state).dayNotes[day]);});clrSel();setTaskCtx(false);});}
+if(ctxDel){ctxDel.addEventListener('click',()=>{const p=ctxSel();if(!p.length)return;const dbs=p.map(({day,taskId})=>{const t=getSpace(state).days[day]?.find(x=>x.id===taskId);return t?._db||taskId;});commit('Удалить',st=>{const a=getSpace(st);p.forEach(({day,taskId})=>{a.days[day]=a.days[day].filter(t=>t.id!==taskId);delete a.boards[taskId];if(curBoard===taskId)curBoard=null;});a.taskGroups=(a.taskGroups||[]).map(g=>({...g,taskIds:(g.taskIds||[]).filter(id=>!p.some(px=>px.taskId===id))})).filter(g=>g.taskIds.length>1);},()=>Promise.all(dbs.map(id=>cdCal(id))));clrSel();setTaskCtx(false);});}
+if(ctxCol){ctxCol.addEventListener('change',e=>{const p=ctxSel();if(!p.length)return;const c=e.target.value;commit('Цвет',st=>{const a=getSpace(st);p.forEach(({day,taskId})=>{const t=a.days[day]?.find(x=>x.id===taskId);if(t)t.color=c;});},()=>Promise.all(p.map(({day,taskId})=>{const t=getSpace(state).days[day]?.find(x=>x.id===taskId);if(t)return cuCal(t._db||t.id,{color:c});})));});}
+if(ctxGrp){ctxGrp.addEventListener('click',()=>{const p=ctxSel();if(p.length<2)return;const sid=state.activeSpaceId;commit('Группа',st=>{const a=getSpace(st);if(!Array.isArray(a.taskGroups))a.taskGroups=[];const gid=st.nextTaskGroupId++;a.taskGroups.push({id:gid,name:'Группа '+gid,color:'#8ea1ff',taskIds:[...new Set(p.map(px=>px.taskId))]});},async()=>{const{data}=await sbq(sb=>sb.from('task_groups').insert({user_id:uid(),space_id:sid,name:'Группа',color:'#8ea1ff'}).select('id').single());if(!data?.id)return;await Promise.all(p.map(({day,taskId})=>{const t=getSpace(state).days[day]?.find(x=>x.id===taskId);if(t)return cuCal(t._db||t.id,{task_group_id:data.id,task_group_id_local:data.id});}));});clrSel();setTaskCtx(false);});}
+document.getElementById('addCloud').addEventListener('click',()=>{const id=curBoard;if(!id)return;const ti=taskById(id,state),ic=ti?.day!==null;const nc={id:Date.now(),text:'',x:50,y:50,groupId:null};commit('Заметка',st=>{ensureBoard(st,id).clouds.push(nc);},()=>ic?ciBN(id,nc):ciDBN(id,nc));});
+document.getElementById('groupClouds').addEventListener('click',()=>{const id=curBoard;if(!id||selClouds.size<2)return;const p=[...selClouds];commit('Группа заметок',st=>{const b=ensureBoard(st,id);const g=st.nextGroupId++;b.clouds.forEach(c=>{if(p.includes(c.id))c.groupId=g;});});});
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Delete')return;if(e.target.matches('input,textarea,[contenteditable="true"]'))return;
+  if(curBoard&&selClouds.size>0){const p=[...selClouds],ti=taskById(curBoard,state),ic=ti?.day!==null;commit('Удалить заметки',st=>{const b=ensureBoard(st,curBoard);const td=b.clouds.filter(c=>p.includes(c.id));b.clouds=b.clouds.filter(c=>!p.includes(c.id));td.forEach(c=>{const db=c._db||c.id;if(ic)cdBN(db);else sbq(sb=>sb.from('dock_board_notes').delete().eq('id',db));});});selClouds=new Set();return;}
+  if(selTasks.size>0){const p=selRefs();const dbs=p.map(({day,taskId})=>{const t=getSpace(state).days[day]?.find(x=>x.id===taskId);return t?._db||taskId;});commit('Удалить',st=>{const a=getSpace(st);p.forEach(({day,taskId})=>{a.days[day]=a.days[day].filter(t=>t.id!==taskId);delete a.boards[taskId];if(curBoard===taskId)curBoard=null;});a.taskGroups=(a.taskGroups||[]).map(g=>({...g,taskIds:(g.taskIds||[]).filter(id=>!p.some(px=>px.taskId===id))})).filter(g=>g.taskIds.length>1);},()=>Promise.all(dbs.map(id=>cdCal(id))));clrSel();}
 });
+document.getElementById('ungroupClouds').addEventListener('click',()=>{const id=curBoard;if(!id||!selClouds.size)return;const p=[...selClouds];commit('Разгруппировка',st=>{ensureBoard(st,id).clouds.forEach(c=>{if(p.includes(c.id))c.groupId=null;});});});
+document.getElementById('zoomIn').addEventListener('click',()=>{const id=curBoard;if(!id)return;commit('+Масштаб',st=>{const b=ensureBoard(st,id);b.zoom=Math.min(2.5,b.zoom+0.1);});});
+document.getElementById('zoomOut').addEventListener('click',()=>{const id=curBoard;if(!id)return;commit('-Маштаб',st=>{const b=ensureBoard(st,id);b.zoom=Math.max(0.4,b.zoom-0.1);});});
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.key.toLowerCase()==='z'){e.preventDefault();if(hIdx>0){hIdx--;state=structuredClone(hist[hIdx].snap);prevIdx=null;persist();renderAll();}}});
 
-
-function switchSpace(nextSpace) {
-  if (!(nextSpace in state.spaces)) return;
-  commit(`Переключено пространство на «${getSpaceLabel(nextSpace, state)}»`, (st) => {
-    st.activeSpaceId = nextSpace;
-  });
-  void persistCurrentSpacePreference(nextSpace);
-  setSpaceMenuOpen(false);
-  clearSpaceSelection();
-  setSpaceActionMenuOpen(false);
-  clearTaskSelection();
-  currentBoardTaskId = null;
-}
-
-const addSpaceForm = document.getElementById('addSpaceForm');
-if (addSpaceForm) {
-  addSpaceForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = addSpaceForm.spaceName.value.trim();
-    if (!name) return;
-    const key = await insertUserSpace(crypto.randomUUID(), name);
-    if (!key) {
-      return;
-    }
-
-    commit(`Добавлено пространство «${name}»`, (st) => {
-      st.spaces[key] = createSpaceState();
-      if (!st.spaceNames) st.spaceNames = {};
-      st.spaceNames[key] = name;
-      st.activeSpaceId = key;
-    });
-    availableSpaces = syncSpacesWithState([
-      ...availableSpaces.filter((space) => space.key !== key),
-      { key, name }
-    ], state);
-    addSpaceForm.reset();
-    setSpaceMenuOpen(true);
-    currentBoardTaskId = null;
-  });
-}
-
-const spaceMenuElement = document.getElementById('spaceMenu');
-if (spaceMenuElement) {
-  spaceMenuElement.addEventListener('click', (e) => {
-    const btn = e.target.closest('.space-option');
-    if (!btn) return;
-    const key = btn.dataset.space;
-    if (!(key in state.spaces)) return;
-
-    if (e.ctrlKey) {
-      if (selectedSpaceKeys.has(key)) selectedSpaceKeys.delete(key);
-      else selectedSpaceKeys.add(key);
-      renderSpaceOptions();
-      return;
-    }
-
-    selectedSpaceKeys = new Set([key]);
-    switchSpace(key);
-  });
-
-  spaceMenuElement.addEventListener('contextmenu', (e) => {
-    const btn = e.target.closest('.space-option');
-    if (!btn) return;
-    e.preventDefault();
-    const key = btn.dataset.space;
-    if (!(key in state.spaces)) return;
-    if (!selectedSpaceKeys.has(key)) selectedSpaceKeys = new Set([key]);
-    spaceActionTargetKey = key;
-    renderSpaceOptions();
-    setSpaceActionMenuOpen(true, e.clientX, e.clientY);
-  });
-
-  attachTouchContextAction(spaceMenuElement, (x, y, event) => {
-    const btn = event.target.closest('.space-option');
-    if (!btn) return;
-    const key = btn.dataset.space;
-    if (!(key in state.spaces)) return;
-    if (!selectedSpaceKeys.has(key)) selectedSpaceKeys = new Set([key]);
-    spaceActionTargetKey = key;
-    renderSpaceOptions();
-    setSpaceActionMenuOpen(true, x, y);
-  }, (e) => Boolean(e.target.closest('.space-option')));
-}
-
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.space-menu-wrap')) {
-    setSpaceMenuOpen(false);
-    if (selectedSpaceKeys.size > 0) {
-      clearSpaceSelection();
-      renderSpaceOptions();
-    }
-  }
-  if (isNotesPanelOpen && !e.target.closest('#notesPanel') && !e.target.closest('#toggleNotesPanel')) setNotesPanelOpen(false);
-  if (isSpaceActionMenuOpen && !e.target.closest('#spaceActionMenu') && !e.target.closest('.space-option')) setSpaceActionMenuOpen(false);
-  if (isTaskContextMenuOpen && !e.target.closest('#taskContextMenu') && !e.target.closest('.task')) setTaskContextMenuOpen(false);
-  if (!e.target.closest('.task') && !e.ctrlKey && selectedTaskKeys.size > 0) {
-    clearTaskSelection();
-    renderCalendar();
-  }
-});
-
-document.getElementById('themeToggle').addEventListener('click', () => {
-  commit('Смена темы', (st) => {
-    st.theme = st.theme === 'dark' ? 'light' : 'dark';
-  });
-});
-
-document.getElementById('toggleNotesPanel').addEventListener('click', () => {
-  setNotesPanelOpen(!isNotesPanelOpen);
-  if (isNotesPanelOpen) setHistoryOpen(false);
-});
-
-document.getElementById('toggleHistory').addEventListener('click', () => {
-  setHistoryOpen(!isHistoryOpen);
-  if (isHistoryOpen) setInstructionsOpen(false);
-});
-
-document.getElementById('toggleInstructions').addEventListener('click', () => {
-  setInstructionsOpen(!isInstructionsOpen);
-  if (isInstructionsOpen) setHistoryOpen(false);
-});
-
-const logoutButton = document.getElementById('logout-btn');
-if (logoutButton) {
-  logoutButton.addEventListener('click', handleLogout);
-}
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    if (isHistoryOpen) setHistoryOpen(false);
-    if (isInstructionsOpen) setInstructionsOpen(false);
-    if (isSpaceMenuOpen) setSpaceMenuOpen(false);
-    if (isSpaceActionMenuOpen) setSpaceActionMenuOpen(false);
-    if (selectedSpaceKeys.size > 0) { clearSpaceSelection(); renderSpaceOptions(); }
-    if (isTaskContextMenuOpen) setTaskContextMenuOpen(false);
-    if (isNotesPanelOpen) setNotesPanelOpen(false);
-  }
-});
-
-document.getElementById('clearUnpinned').addEventListener('click', () => {
-  commit('Удалены незакреплённые задачи', (st) => {
-    const active = getActiveSpace(st);
-    for (const day of DAYS) {
-      active.days[day] = active.days[day].filter((t) => t.pinned);
-    }
-    active.dockTasks = active.dockTasks.filter((t) => t.pinned);
-  });
-});
-
-document.getElementById('exitPreview').addEventListener('click', () => {
-  previewIndex = null;
+// ---------------------------------------------------------------------------
+// INIT
+// ---------------------------------------------------------------------------
+setHist(false);setInstr(false);setSpMenu(false);setDock(false);setNotes(false);syncLogout();
+async function ensureUid(){currentUserId=tgUser?.id?String(tgUser.id):getStoredId();if(currentUserId){AUTH_KEYS.forEach(k=>localStorage.setItem(k,String(currentUserId)));return currentUserId;}return checkAuth();}
+async function initApp(){
+  const uid2=await ensureUid();if(!uid2)return;
+  const spaces=await loadSpaces();avSpaces=syncSpaces(spaces,state);
+  const pref=await loadPref();
+  const init=(pref&&pref in state.spaces)?pref:(avSpaces[0]?.key||null);
+  state.activeSpaceId=init;persist();
+  if(init)await loadSpace(init);
+  hist=[{desc:'Старт',snap:structuredClone(state),ts:new Date().toISOString()}];hIdx=0;prevIdx=null;
   renderAll();
-});
-
-const toggleDockMenuButton = document.getElementById('toggleDockMenu');
-if (toggleDockMenuButton) {
-  toggleDockMenuButton.addEventListener('click', () => {
-    setDockMenuOpen(!isDockMenuOpen);
-  });
+  if(init)subSpace(init);
+  fetchTasks();syncLogout();
+  console.log('[app] ready user:',currentUserId,'space:',init);
 }
-
-const dockTaskForm = document.getElementById('dockTaskForm');
-if (dockTaskForm) {
-  dockTaskForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const input = dockTaskForm.title;
-    const title = input.value.trim();
-    if (!title) return;
-    commit(`Добавлена задача в поле доски «${title}»`, (st) => {
-      getActiveSpace(st).dockTasks.push({ id: st.nextTaskId++, title, tags: [], pinned: false, createdAt: Date.now() });
-    });
-    dockTaskForm.reset();
-  });
-
-  const dockList = document.getElementById('taskDockList');
-  if (dockList) {
-    dockList.addEventListener('dragover', (e) => e.preventDefault());
-    dockList.addEventListener('drop', () => {
-      if (!dragTask) return;
-      if (dragTask.fromDock) {
-        commit('Изменён порядок задач в поле доски', (st) => {
-          moveDockTask(st, dragTask.taskId);
-        });
-      } else {
-        const { fromDay, taskId } = dragTask;
-        commit('Задача перемещена в поле доски', (st) => {
-          const active = getActiveSpace(st);
-          const source = active.days[fromDay];
-          const idx = source.findIndex((t) => t.id === taskId);
-          if (idx < 0) return;
-          const [task] = source.splice(idx, 1);
-          active.dockTasks.push(task);
-        });
-      }
-      dragTask = null;
-    });
-  }
-}
-
-const addSideNoteForm = document.getElementById('addSideNoteForm');
-if (addSideNoteForm) {
-  addSideNoteForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const text = addSideNoteForm.text.value.trim();
-    if (!text) return;
-    commit('Добавлена заметка в боковое меню', (st) => {
-      getGlobalSideNotes(st).push({ id: st.nextSideNoteId++, text, createdAt: Date.now() });
-    });
-    addSideNoteForm.reset();
-  });
-}
-
-document.getElementById('backToCalendar').addEventListener('click', () => {
-  currentBoardTaskId = null;
-  selectedCloudIds = new Set();
-  renderBoard();
-});
-
-const spaceActionCopy = document.getElementById('spaceActionCopy');
-const spaceActionExport = document.getElementById('spaceActionExport');
-const spaceActionDelete = document.getElementById('spaceActionDelete');
-const importSpaceBtn = document.getElementById('importSpaceBtn');
-const importSpaceInput = document.getElementById('importSpaceInput');
-
-if (spaceActionCopy) {
-  spaceActionCopy.addEventListener('click', async () => {
-    if (!spaceActionTargetKey) return;
-    const payload = {
-      name: getSpaceLabel(spaceActionTargetKey, state),
-      spaceKey: spaceActionTargetKey,
-      data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpaceId: spaceActionTargetKey }))
-    };
-    const text = JSON.stringify(payload, null, 2);
-    try {
-      await navigator.clipboard.writeText(text);
-      alert('Пространство скопировано в буфер обмена.');
-    } catch {
-      alert('Не удалось скопировать автоматически.');
-    }
-    setSpaceActionMenuOpen(false);
-  });
-}
-
-if (spaceActionExport) {
-  spaceActionExport.addEventListener('click', () => {
-    if (!spaceActionTargetKey) return;
-    const payload = {
-      name: getSpaceLabel(spaceActionTargetKey, state),
-      spaceKey: spaceActionTargetKey,
-      exportedAt: new Date().toISOString(),
-      data: normalizeImportedSpaceData(getActiveSpace({ ...state, activeSpaceId: spaceActionTargetKey }))
-    };
-    downloadJson(`space-${spaceActionTargetKey}.json`, payload);
-    setSpaceActionMenuOpen(false);
-  });
-}
-
-if (spaceActionDelete) {
-  spaceActionDelete.addEventListener('click', async () => {
-    const targets = getSpaceActionSelection();
-    if (targets.length === 0) {
-      setSpaceActionMenuOpen(false);
-      return;
-    }
-
-    const removedFromSupabase = await deleteUserSpaces(targets);
-    if (!removedFromSupabase) {
-      alert('Не удалось удалить пространство из Supabase.');
-      return;
-    }
-
-    commit(targets.length > 1 ? `Удалено/очищено пространств: ${targets.length}` : (targets[0] === 'management' || targets[0] === 'notes') ? `Очищено пространство «${getSpaceLabel(targets[0], state)}»` : `Удалено пространство «${getSpaceLabel(targets[0], state)}»`, (st) => {
-      if (!st.spaceNames) st.spaceNames = {};
-
-      targets.forEach((target) => {
-        if (!(target in st.spaces)) return;
-        delete st.spaces[target];
-        delete st.spaceNames[target];
-      });
-
-      if (Object.keys(st.spaces).length === 0) {
-      }
-
-      if (!(st.activeSpaceId in st.spaces)) {
-        st.activeSpaceId = Object.keys(st.spaces)[0] || null;
-      }
-
-      currentBoardTaskId = null;
-    });
-    availableSpaces = syncSpacesWithState(
-      availableSpaces.filter((space) => !targets.includes(space.key)),
-      state
-    );
-    clearSpaceSelection();
-    setSpaceActionMenuOpen(false);
-  });
-}
-
-if (importSpaceBtn && importSpaceInput) {
-  importSpaceBtn.addEventListener('click', () => importSpaceInput.click());
-  importSpaceInput.addEventListener('change', async () => {
-    const file = importSpaceInput.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      alert('Файл импорта не является корректным JSON.');
-      importSpaceInput.value = '';
-      return;
-    }
-
-    const importedSpaces = extractImportedSpaces(parsed);
-
-    if (importedSpaces.length === 0) {
-      alert('В файле не найдено ни одного пространства для импорта.');
-      importSpaceInput.value = '';
-      return;
-    }
-
-    const remappedImportedSpaces = importedSpaces.map((space) => ({
-      ...space,
-      key: resolveSpaceId(space.key)
-    }));
-    const duplicateSpace = remappedImportedSpaces.find(({ key }) => key in state.spaces);
-    if (duplicateSpace) {
-      alert(`Пространство с ID ${duplicateSpace.key} уже существует и не будет импортировано.`);
-      importSpaceInput.value = '';
-      return;
-    }
-
-    for (const importedSpace of remappedImportedSpaces) {
-      const savedKey = await insertUserSpace(importedSpace.key, importedSpace.name);
-      if (!savedKey) {
-        importSpaceInput.value = '';
-        return;
-      }
-      importedSpace.key = savedKey;
-    }
-
-    commit(
-      remappedImportedSpaces.length > 1
-        ? `Импортировано пространств: ${remappedImportedSpaces.length}`
-        : `Импортировано пространство в «${remappedImportedSpaces[0].name}»`,
-      (st) => {
-        if (!st.spaceNames) st.spaceNames = {};
-        remappedImportedSpaces.forEach(({ key, name, data }) => {
-          st.spaceNames[key] = name;
-          st.spaces[key] = data;
-        });
-      }
-    );
-    availableSpaces = syncSpacesWithState([
-      ...availableSpaces.filter((space) => !remappedImportedSpaces.some((item) => item.key === space.key)),
-      ...remappedImportedSpaces.map(({ key, name }) => ({ key, name }))
-    ], state);
-    importSpaceInput.value = '';
-  });
-}
-
-const ctxPin = document.getElementById('ctxPin');
-const ctxBackground = document.getElementById('ctxBackground');
-const ctxDelete = document.getElementById('ctxDelete');
-const ctxColor = document.getElementById('ctxColor');
-const ctxCreateGroup = document.getElementById('ctxCreateGroup');
-
-if (ctxPin) {
-  ctxPin.addEventListener('click', () => {
-    const picks = getTaskContextSelection();
-    if (picks.length === 0) return;
-    commit('Изменён статус закрепления', (st) => {
-      const active = getActiveSpace(st);
-      picks.forEach(({ day, taskId }) => {
-        const t = active.days[day].find((x) => x.id === taskId);
-        if (t) t.pinned = !t.pinned;
-      });
-    });
-    clearTaskSelection();
-    setTaskContextMenuOpen(false);
-  });
-}
-
-if (ctxBackground) {
-  ctxBackground.addEventListener('click', () => {
-    if (!taskContextTarget) return;
-    const { day, taskId } = taskContextTarget;
-    commit(`Задача перенесена на фон дня «${day}»`, (st) => {
-      const active = getActiveSpace(st);
-      const source = active.days[day];
-      const idx = source.findIndex((t) => t.id === taskId);
-      if (idx < 0) return;
-      const [task] = source.splice(idx, 1);
-      active.dayBackgrounds[day] = task.title;
-      delete active.boards[task.id];
-      if (currentBoardTaskId === task.id) currentBoardTaskId = null;
-    });
-    clearTaskSelection();
-    setTaskContextMenuOpen(false);
-  });
-}
-
-if (ctxDelete) {
-  ctxDelete.addEventListener('click', () => {
-    const picks = getTaskContextSelection();
-    if (picks.length === 0) return;
-    commit('Удалена задача через меню', (st) => {
-      const active = getActiveSpace(st);
-      picks.forEach(({ day, taskId }) => {
-        active.days[day] = active.days[day].filter((t) => t.id !== taskId);
-        delete active.boards[taskId];
-        if (currentBoardTaskId === taskId) currentBoardTaskId = null;
-      });
-      active.taskGroups = (active.taskGroups || []).map((group) => ({
-        ...group,
-        taskIds: (group.taskIds || []).filter((id) => !picks.some((pick) => pick.taskId === id))
-      })).filter((group) => group.taskIds.length > 1);
-    });
-    clearTaskSelection();
-    setTaskContextMenuOpen(false);
-  });
-}
-
-if (ctxColor) {
-  ctxColor.addEventListener('change', (e) => {
-    const picks = getTaskContextSelection();
-    if (picks.length === 0) return;
-    const nextColor = e.target.value;
-    commit('Изменён цвет задачи через меню', (st) => {
-      const active = getActiveSpace(st);
-      picks.forEach(({ day, taskId }) => {
-        const t = active.days[day].find((x) => x.id === taskId);
-        if (t) t.color = nextColor;
-      });
-    });
-  });
-}
-
-
-if (ctxCreateGroup) {
-  ctxCreateGroup.addEventListener('click', () => {
-    const picks = getTaskContextSelection();
-    if (picks.length < 2) return;
-    commit('Создана группа задач календаря', (st) => {
-      const active = getActiveSpace(st);
-      if (!Array.isArray(active.taskGroups)) active.taskGroups = [];
-      const groupId = st.nextTaskGroupId++;
-      const taskIds = [...new Set(picks.map((pick) => pick.taskId))];
-      active.taskGroups.push({ id: groupId, name: `Группа ${groupId}`, color: '#8ea1ff', taskIds });
-    });
-    clearTaskSelection();
-    setTaskContextMenuOpen(false);
-  });
-}
-
-document.getElementById('addCloud').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId) return;
-  commit('Добавлена заметка', (st) => {
-    const b = ensureBoard(st, taskId);
-    b.clouds.push({ id: st.nextCloudId++, text: '', x: 50, y: 50, groupId: null });
-  });
-});
-
-document.getElementById('groupClouds').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId || selectedCloudIds.size < 2) return;
-  const picks = [...selectedCloudIds];
-  commit('Создана группа заметок', (st) => {
-    const b = ensureBoard(st, taskId);
-    const gid = st.nextGroupId++;
-    b.clouds.forEach((c) => {
-      if (picks.includes(c.id)) c.groupId = gid;
-    });
-  });
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Delete') return;
-  if (e.target.matches('input, textarea, [contenteditable="true"]')) return;
-  if (!currentBoardTaskId || selectedCloudIds.size === 0) return;
-  const picks = [...selectedCloudIds];
-  commit('Удалены выделенные заметки', (st) => {
-    const b = ensureBoard(st, currentBoardTaskId);
-    b.clouds = b.clouds.filter((c) => !picks.includes(c.id));
-  });
-  selectedCloudIds = new Set();
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Delete') return;
-  if (e.target.matches('input, textarea, [contenteditable="true"]')) return;
-  if (selectedTaskKeys.size === 0) return;
-  const picks = getSelectedTaskRefs();
-  commit('Удалены выделенные задачи', (st) => {
-    const active = getActiveSpace(st);
-    picks.forEach(({ day, taskId }) => {
-      active.days[day] = active.days[day].filter((t) => t.id !== taskId);
-      delete active.boards[taskId];
-      if (currentBoardTaskId === taskId) currentBoardTaskId = null;
-    });
-    active.taskGroups = (active.taskGroups || []).map((group) => ({
-      ...group,
-      taskIds: (group.taskIds || []).filter((id) => !picks.some((pick) => pick.taskId === id))
-    })).filter((group) => group.taskIds.length > 1);
-  });
-  clearTaskSelection();
-});
-
-document.getElementById('ungroupClouds').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId || selectedCloudIds.size === 0) return;
-  const picks = [...selectedCloudIds];
-  commit('Разгруппировка заметок', (st) => {
-    const b = ensureBoard(st, taskId);
-    b.clouds.forEach((c) => {
-      if (picks.includes(c.id)) c.groupId = null;
-    });
-  });
-});
-
-document.getElementById('zoomIn').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId) return;
-  commit('Увеличен масштаб доски', (st) => {
-    const b = ensureBoard(st, taskId);
-    b.zoom = Math.min(2.5, b.zoom + 0.1);
-  });
-});
-
-document.getElementById('zoomOut').addEventListener('click', () => {
-  const taskId = currentBoardTaskId;
-  if (!taskId) return;
-  commit('Уменьшен масштаб доски', (st) => {
-    const b = ensureBoard(st, taskId);
-    b.zoom = Math.max(0.4, b.zoom - 0.1);
-  });
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.key.toLowerCase() === 'z') {
-    e.preventDefault();
-    if (currentHistoryIndex > 0) {
-      currentHistoryIndex -= 1;
-      state = structuredClone(history[currentHistoryIndex].snapshot);
-      previewIndex = null;
-      persist();
-      renderAll();
-    }
-  }
-});
-
-setHistoryOpen(false);
-setInstructionsOpen(false);
-setSpaceMenuOpen(false);
-setDockMenuOpen(false);
-setNotesPanelOpen(false);
-syncLogoutButtonVisibility();
-
-async function ensureTelegramUserId() {
-  currentUserId = telegramUser?.id || getStoredTelegramUserId() || null;
-  if (currentUserId) {
-    localStorage.setItem('tg_user_id', String(currentUserId));
-    localStorage.setItem('tg_id', String(currentUserId));
-    return currentUserId;
-  }
-
-  return checkAuth();
-}
-
-async function initializeApp() {
-  const resolvedUserId = await ensureTelegramUserId();
-  if (!resolvedUserId) {
-    return;
-  }
-
-  availableSpaces = syncSpacesWithState(await loadUserSpaces(), state);
-  const supabasePreferredSpace = await loadCurrentSpacePreference();
-  const defaultTasksSpace = findSpaceKeyByName('Режим задач', state) || TELEGRAM_INBOX_COLUMN_ID;
-  const initialSpace = supabasePreferredSpace && supabasePreferredSpace in state.spaces
-    ? supabasePreferredSpace
-    : defaultTasksSpace && defaultTasksSpace in state.spaces
-      ? defaultTasksSpace
-      : availableSpaces[0]?.key && availableSpaces[0].key in state.spaces
-        ? availableSpaces[0].key
-        : null;
-
-  if (state.activeSpaceId !== initialSpace) {
-    state.activeSpaceId = initialSpace;
-    persist();
-    history = [{ description: 'Старт', snapshot: structuredClone(state), ts: new Date().toISOString() }];
-    currentHistoryIndex = 0;
-    previewIndex = null;
-  }
-
-  renderAll();
-  fetchTasks();
-  subscribeToTasksRealtime();
-}
-
-initializeApp();
+initApp();
