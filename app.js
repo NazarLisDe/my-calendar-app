@@ -193,7 +193,7 @@ async function refreshSpace(sid){
   const s=sid||state.activeSpaceId;if(!s)return;
   if(_rfPending)return;_rfPending=true;
   setTimeout(()=>{_rfPending=false;},800);
-  await loadSpace(s);renderAll();
+  try{await loadSpace(s);}catch(e){console.warn('[rf]',e);}renderAll();
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +285,7 @@ function syncSpaces(spaces,st=state){
 }
 function toUUID(k){const r=typeof k==='string'?k.trim():'';return/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(r)?r:crypto.randomUUID();}
 async function loadSpaces(){
+  if(!currentUserId){console.warn('[sp] no uid');return[];}
   const{data,error}=await sbq(sb=>sb.from('user_spaces').select('*').eq('user_id',uid()));
   if(error){console.warn('[sp]',error);AUTH_KEYS.forEach(k=>localStorage.removeItem(k));localStorage.removeItem('is_auth');currentUserId=null;state=mkState();avSpaces=[];syncLogout();await showLoginModal();return[];}
   return(data||[]).map(normSp).filter(Boolean);
@@ -323,7 +324,7 @@ async function fetchTasks(){
   const list=document.getElementById('telegramTasksList');if(!list)return;
   if(!currentUserId||!isAuth()){list.innerHTML='<li>Войдите для просмотра.</li>';return;}
   list.innerHTML='<li>Загрузка...</li>';
-  const{data,error}=await sbq(sb=>sb.from('tasks').select('*').eq('column_id',INBOX_COL).order('created_at',{ascending:false}));
+  const{data,error}=await sbq(sb=>sb.from('tasks').select('*').eq('column_id',INBOX_COL).eq('user_id',Number(currentUserId)).order('created_at',{ascending:false}));
   if(error){list.innerHTML='<li>Ошибка: '+error.message+'</li>';return;}
   if(!data?.length){list.innerHTML='<li>Пока нет заметок.</li>';return;}
   list.innerHTML='';
@@ -616,7 +617,7 @@ setHist(false);setInstr(false);setSpMenu(false);setDock(false);setNotes(false);s
 async function ensureUid(){currentUserId=tgUser?.id?String(tgUser.id):getStoredId();if(currentUserId){AUTH_KEYS.forEach(k=>localStorage.setItem(k,String(currentUserId)));return currentUserId;}return checkAuth();}
 async function initApp(){
   const uid2=await ensureUid();if(!uid2)return;
-  const spaces=await loadSpaces();avSpaces=syncSpaces(spaces,state);
+  const spaces=await loadSpaces();console.log('[app] spaces:',spaces?.length,'uid:',currentUserId);avSpaces=syncSpaces(spaces,state);
   const pref=await loadPref();
   const init=(pref&&pref in state.spaces)?pref:(avSpaces[0]?.key||null);
   state.activeSpaceId=init;persist();
